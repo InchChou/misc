@@ -1,0 +1,5 @@
+github repos:
+1. lxk0301/scripts
+2. fuzhengwei/itstack-demo-design
+3. aistrate/AlgorithmsSedgewick
+4. cybercser/OpenGL_3_3_Tutorial_Translation
