@@ -16,15 +16,14 @@ UV 球体是许多三维建模工具如 Blender 中的标准几何体。网格�
 
 球面是一个3D闭合表面，表面上所有的点与球心的距离（半径）相等。等式如下：
 
-![equation of sphere](http://www.songho.ca/opengl/files/gl_sphere_eq01.png)
 $$
 x^{2} + y^{2} + z^{2} = r^{2}
 $$
 由于我们无法在球体上绘制所有点，因此我们只能通过将球体除以扇区sector（longitude经度）和堆栈stacks（latitude纬度）来采样有限数量的点。 然后将这些采样点连接在一起以形成球体的表面。 
 
-![Parametric equation of a sphere](http://www.songho.ca/opengl/files/gl_sphere01.png)
+![Parametric equation of a sphere](assets/C++生成球体网格/gl_sphere01.png)
 
-![Sectors and stacks of a sphere](http://www.songho.ca/opengl/files/gl_sphere02.png)
+![Sectors and stacks of a sphere](assets/C++生成球体网格/gl_sphere02.png)
 
 球面上的任意点 (x, y, z) 可以通过具有相应扇形角 $\theta$ 和stack角 $\phi$ 的参数方程来计算。 
 $$
@@ -97,7 +96,7 @@ for(int i = 0; i <= stackCount; ++i)
 
 为了在 OpenGL 中绘制球体的表面，我们必须对相邻顶点进行三角剖分以形成多边形。 可以使用单个三角形条来渲染整个球体。 但是，如果共享顶点具有不同的法线或纹理坐标，则不能使用单个三角形带。 
 
-![vertex indices of sphere](http://www.songho.ca/opengl/files/gl_sphere03.png)
+![vertex indices of sphere](assets/C++生成球体网格/gl_sphere03.png)
 
 Stack中的每个扇区需要 2 个三角形。 如果当前stack的第一个顶点索引是k1，下一个stack是k2，那么2个三角形的顶点索引的逆时针顺序是； 
 
