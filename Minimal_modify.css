@@ -1,16 +1,16 @@
-:root {
-    --h1: 1.602em;
+body {
+    --h1-size: 1.602em;
     --h1-style: normal;
-    --h2: 1.424em;
+    --h2-size: 1.424em;
     --h2-style: normal;
-    --h3: 1.266em;
+    --h3-size: 1.266em;
     --h3-style: normal;
     --h3-weight: 600;
-    --h4: 1.125em;
+    --h4-size: 1.125em;
     --h4-style: normal;
     --h4-weight: 600;
-    --h5: 1em;
+    --h5-size: 1em;
     --h5-style: normal;
-    --h6: 1em;
+    --h6-size: 1em;
     --h6-style: italic;
 }
