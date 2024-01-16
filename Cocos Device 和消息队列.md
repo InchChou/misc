@@ -190,7 +190,7 @@ void CommandBufferAgent::setViewport(const Viewport &vp) {
 
 这里创建了一个 `Message` 的子类 `CommandBufferSetViewport` 作为一个消息。
 
-`ENQUEUE_MESSAGE_2` 的第三个参数和第四个参数为一对，`actor` 和 `getActor()` 分别为 `Param1` 和 `Value1`。`actor` 只是被使用为一个名字而已，后续作为 Message 构造函数的入参 `Inactor` 使用。`getActor()` 返回 `Actor*`，所以 `Type1` 为 `Actor*`。
+`ENQUEUE_MESSAGE_2` 的第三个参数和第四个参数为一对，`actor` 和 `getActor()` 分别为 `Param1` 和 `Value1`。`actor` 只是被使用为一个 `CommandBufferSetViewport` 的变量名而已，后续作为 Message 构造函数的入参 `Inactor` 使用，它用来初始化 `CommandBufferSetViewport` 的 `actor` 变量。`getActor()` 返回 `Actor*`，所以 `Type1` 为 `Actor*`。
 
 同理第五个参数和第六个参数 `vp` 和 `vp` 为一对，前者作为名字，后者作为 `Value2`，取其类型 `Type2` 为 `Viewport`。
 
