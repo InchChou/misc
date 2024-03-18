@@ -133,11 +133,11 @@ bottomLevelAS.deviceAddress = vkGetAccelerationStructureDeviceAddressKHR(device,
 
 #### BLAS流程总结
 
-1. 读取模型数据index, vertex buffer -> geoInfo
-2. 由geoInfo -> buildgeoInfo -> buildsizeInfo，获取size大小
-3. 有 buildSize -> createBLAS,获取骨架
-4. 创建临时 buffer，作为计算区域，再一次创建 buildgeoInfo，这次指明目标 AS 以及临时 buffer 地址
-5. 提交给 command buffer 完成构建，删去临时 buffer
+1. 读取模型数据index, vertex buffer，放入 VkASGeometryKHR
+2. 由 VkASGeometryKHR -> VkASBuildGeoInfoKHR -> VkASBuildSizesInfoKHR，获取执行构建的内存 size 大小
+3. 有 VkASBuildSizesInfoKHR -> createBLAS，分配足够大小的缓冲区来容纳加速结构（获取骨架）
+4. 使用 buildScrathSize 创建临时 buffer，作为计算区域，再一次创建 VkASBuildGeoInfoKHR，这次指明目标 AS 以及临时 buffer 地址
+5. 调用 vkCmdBuildASKHR 提交给 command buffer 完成构建，删去临时 buffer
 
 创建 TLAS (Top Level Acceleration Structure) 的的流程与 BLAS 基本一致，不过是先用 `VkAccelerationStructureInstanceKHR` 引用创建好的 BLAS 的 deviceAddress，然后将 `VkAccelerationStructureGeometryKHR` 中的 `triangle` 部分改成 `instance` 引用即可。
 
@@ -269,3 +269,13 @@ vkCmdTraceRaysKHR(
 这个函数要求对光线生成、未命中、命中、可调用着色器绑定表分别填入对应的`VkStridedDeviceAddressRegionKHR`结构体来引用其 SBT 缓冲区；由于我们想对每个像素都发射出一条光线，所以将`width`和`height`指定为渲染区域的大小，并将`depth`设为1。
 
 最后将存储图像的布局改变为 `VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL`，swapChain图像改变为 `VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL`，使用 `vkCmdCopyImage` 将存储图像拷贝到 swapChain 图像中。再将swapChain图像改为 `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` 用于显示。存储图像的布局改回 `VK_IMAGE_LAYOUT_GENERAL`，用于存储光追结果。
+
+### 其他概念
+
+其他概念都是 vulkan 光追引入的，但是在 raytracingbasic 中未使用到，所以只是简单描述一下。
+
+VK_KHR_ray_query 扩展，它可以支持跟踪来自所有着色器类型的广西按，包括图形、计算和光线追踪管线。它不会引入额外的 API 入口点。只是未相关的 SPIR-V 和 GLSL 扩展（SPV_KHR_ray_query 和 GLSL_EXT_ray_query）提供 API 支持。
+
+VK_KHR_pipeline_library 扩展，是管线库。它是一种特殊的管线，不能直接绑定和使用。但是可以被链接到其他管线。它没有直接引入任何 API 函数，也没有定义如何创建管线库。这些步骤留给其他相关扩展，目前是 `VK_KHR_ray_tracing_pipeline`。可以创建一个光追管线库，然后在一个光追管线中链接此库。
+
+VK_KHR_deferred_host_operations 扩展，引入了一种跨多个线程分配 CPU 任务的机制。主要是允许应用程序创建和管理线程。只有特别注明延迟的操作才可以延迟。
