@@ -113,7 +113,7 @@ Indices  indices  = Indices(sceneModelInfo[0].indices);
 Vertices vertices = Vertices(sceneModelInfo[0].vertices);
 ```
 
-这样的写法在 PC 端运行良好，但是在高通芯片的安卓机上会在 `vkCreateGraphicsPipelines()` 时报错，报错类型为 `VK_ERROR_UNKNOWN`，目前还不知道原因。
+这样的写法在 PC 端运行良好，但是在高通芯片的安卓机上会在 `vkCreateGraphicsPipelines()` 时报错，报错类型为 `VK_ERROR_UNKNOWN`，目前还不知道原因。（后面通过 [Android 上的 Vulkan 验证层  | Android NDK  | Android Developers](https://developer.android.com/ndk/guides/graphics/validation-layer?hl=zh-cn) 开启了验证层，验证层不报告详细错误信息。）
 
 所以目前来看，在安卓端所有的指针初始化方式都不能用，只能在 storage buffer 和 uniform buffer 中直接初始化。在安卓端的 shader 代码中也不能创建其他新的指针，只能直接访问 storage buffer 和 uniform buffer 中的指针所指的数据。如下：
 
@@ -131,6 +131,13 @@ layout(binding = 4, set = 0) buffer SceneModelInfo {
 Vertices vertices = Vertices(sceneModelInfo[0].vertices); // ERROR: 安卓端无法创建pipeline
 vec4 d0 = vertices.v[offset + 0]; // ERROR: 跟着上面来，无法创建pipeline也就无法访问数据了
 
-vec4 d1 = sceneModelInfo[0].vertices.v[offset + 0]; // SUCCESS: 安卓端只能直接使用 storage buffer 和 uniform buffer 中的指针
+vec4 d1 = sceneModelInfo[0].vertices.v[offset + 1]; // SUCCESS: 安卓端只能直接使用 storage buffer 和 uniform buffer 中的指针
+```
+
+PS: 后来发现安卓端可以直接给指针赋值，不会导致 pipeline 创建失败：
+
+```glsl
+Vertices vertices = sceneModelInfo[0].vertices; // SUCCESS: 可以直接给指针赋值
+vec4 d2 = vertices.v[offset + 2];
 ```
 
