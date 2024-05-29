@@ -6,19 +6,22 @@
 
 上面这些属性已经可以应对绝大部分场景了。但是我们的目标是进一步提高渲染的真实程度，所以我们寻找更加贴近现实的算法，即 Disney BSDF，它使用了更加多的参数来控制光线在材质表面或者材质中的传递。而这些参数在 gltf 2.0 标准的材质系统中是没有的，而是以材质扩展的形式（`KHR_materials_xxxx`）提供出来的。为了使算法统一起来，我们需要将 Disney BSDF 参数与 gltf 中的参数对应起来。
 
-| Disney BSDF 参数     | gltf 扩展参数                                          |
-| ------------------ | -------------------------------------------------- |
-| anisotropic        | KHR_materials_anisotropy : anisotropyStrength      |
-| clearCoat          | KHR_materials_clearcoat : clearcoatFactor          |
-| clearCoatRoughness | KHR_materials_clearcoat : clearcoatRoughnessFactor |
-| ior                | KHR_materials_ior : ior                            |
-| specular           | KHR_materials_specular : specularFactor            |
-| specularTint       | unknown                                            |
-| subsurface         | WIP: KHR_materials_subsurface :                    |
-| scatterDistance    | WIP: KHR_materials_subsurface : scatterDistance    |
-| sheen              | KHR_materials_sheen : sheenRoughnessFactor         |
-| sheenTint          | unknown                                            |
+| Disney BSDF 参数   | gltf 扩展参数                                        |
+| ------------------ | ---------------------------------------------------- |
+| anisotropic        | KHR_materials_anisotropy : anisotropyStrength        |
+| clearCoat          | KHR_materials_clearcoat : clearcoatFactor            |
+| clearCoatRoughness | KHR_materials_clearcoat : clearcoatRoughnessFactor   |
+| ior                | KHR_materials_ior : ior                              |
+| specular           | KHR_materials_specular : specularFactor              |
+| specularTint       | unknown                                              |
+| subsurface         | WIP: KHR_materials_subsurface :                      |
+| scatterDistance    | WIP: KHR_materials_subsurface : scatterDistance      |
+| sheen              | KHR_materials_sheen : sheenRoughnessFactor           |
+| sheenTint          | unknown                                              |
 | specTrans          | 存疑 KHR_materials_transmission : transmissionFactor |
+| 渗透性介质         | 存疑需要 KHR_materials_volume:thicknessFactor > 0    |
+| mediaDensity       | KHR_materials_volume: attenuationDistance            |
+| mediaColor         | KHR_materials_volume: attenuationColor               |
 
 在 blender 中，直接支持了 Disney BSDF，其材质被称为 Principled BSDF（原理化BSDF）。其中一些参数的中英文分别为：
 
@@ -30,5 +33,4 @@
 | Coat            | 涂层      |
 | Sheen           | 边缘光泽    |
 | Emission        | 自发光     |
-
 
