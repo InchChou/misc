@@ -60,7 +60,7 @@ swapchain 中所有的 image 和对应的 imageView 都放在这里面（一般�
 >
 > 还有一篇 slide 值得一看：[Slide 1 (nvidia.com)](https://developer.download.nvidia.com/gameworks/events/GDC2016/mschott_lbishop_gl_vulkan.pdf)
 
-> `vkAcquireNextImageKHR()` 在无 image 可用，且未超时时，会阻塞，见[VK_KHR_swapchain(3) (khronos.org)](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_swapchain.html) Issues 7。大多数情况下不会阻塞。
+> `vkAcquireNextImageKHR()` 在无 image 可用，且未超时时，会阻塞，见[VK_KHR_swapchain(3) (khronos.org)](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_swapchain.html) Issues 7。无 image 可用指的是 swapchain 中的 imageCount 为 0。其他的大多数情况下不会阻塞，可以看作不阻塞。所以它会直接返回 `pImageIndex`，等到对应的 image 可用后将 semaphore 置为 signaled。
 >
 > `vkQueueSubmit()` 不会阻塞。
 >
@@ -91,25 +91,43 @@ swapchain 中所有的 image 和对应的 imageView 都放在这里面（一般�
 
 ### 再分析程序
 
-在引擎中，每个 RenderNode 都对应着一个 nodeContextData，所以它们数目一致（在这里是五个），nodeContextData 中有若干个 FrameCommandBuffer。只使用了一个 semaphore 对 Acquire 和 QueueSubmit 进行同步。使用了数目为 3 的 FrameCommandBuffer（其中包含 CommandBuffer 和对应的 Semaphore）。用了同样数目（3）的 fence 来进行 CPU 和 GPU 之间的同步，这个 3 意味着有 3 个飞行帧。
+在引擎中，每个 RenderNode 都对应着一个 nodeContextData，所以它们数目一致（在这里是五个），nodeContextData 中有若干个 FrameCommandBuffer。只使用了一个 semaphore 对 Acquire 和 QueueSubmit 进行同步。使用了数目为 3 的 FrameCommandBuffer（其中包含 CommandBuffer 和对应的 Semaphore）。用了同样数目（3）的 fence 来进行 CPU 和 GPU 之间的同步，这个 3 意味着有 3 个飞行帧。提交一帧的命令之前，会等待对应的 fence，等待前一帧（实际上是前3帧）完成 present。
 
 > 所以在一帧中有 5*3=15 个 commandbuffer，每一个 RenderNode 可以同时绘制 3 个飞行帧。
+>
+> “等待对应的 fence”时，有特殊情况，就是第一二三帧，fence 的初始化状态为 signaled，意味着不用等待。从第四帧开始才会真正的等待。
 
 引擎中有计数器对帧进行计数，我们可以打断点，发现是在进行第二帧绘制的时候，在 `vkAcquireNextImageKHR()` 时报的错。
 
 由于只使用了一个 semaphore（后文使用 SCIsemaphore 指代），意味着提交完第一帧的绘制命令后，在 acquire 用于第二帧的 SCimage 时有未完成的 signal 或者是等待操作处理。
 
-继续调试，发现在 `vkQueueSubmit` 中，wait 的 semaphore 是 SCIsemaphore。在第一帧时，acquire image 后，SCIsemaphore 变为 signaled，所以此时能直接提交，在开始执行命令后，将 SCIsemaphore 由 signaled 变为 unsignaled。
+继续调试，发现在 `vkQueueSubmit` 中，wait 的 semaphore 是 SCIsemaphore。在第一帧时，首先等待了fence（实际上并未等待），acquire image 后，SCIsemaphore 变为 signaled，所以此时能直接提交，在开始执行命令后，将 SCIsemaphore 由 signaled 变为 unsignaled。
 
-在第二帧时，acquire image 准备 signal 的 semaphore 依然是 SCIsemaphore，但是此时上一个 queueSubmit 中的命令可能还未开始执行，所以 SCIsemaphore 可能依然是 signaled 的状态，此时去 signal 一个 signaled 的信号量是不被支持的，所以验证层会报错。
+在第二帧时，又等待了对应的 fence（实际上并未等待），acquire image 准备 signal 的 semaphore 依然是 SCIsemaphore，但是此时上一个 queueSubmit 中的命令可能还未开始执行，所以 SCIsemaphore 可能依然是 signaled 的状态，此时去 signal 一个 signaled 的信号量是不被支持的，所以验证层会报错。
 
-简单来说，就是第二帧的 image 准备好了，第一帧的 image 还未开始绘制，两者共用一个 semaphore，造成了冲突。
+简单来说，就是第二帧的 image 准备好了，和第一帧共用一个 semaphore，由于未等待 fence（为了等待第一帧的 present 完成，实际上第一帧的 image 很可能还未开始绘制），所以这个 semaphore 上还有未进行的操作，造成了冲突。
+
+如果是从第四帧开始，那么不会造成冲突。
+
+> 上面说的 “wait 的 semaphore 是 SCIsemaphore” 就是验证层中的 wait operations pending，“命令可能还未开始执行，所以 SCIsemaphore 可能依然是 signaled 的状态” 就是验证层中的 uncompleted signal。
+>
+> 在 vulkan tutorial 中尝试在 `drawFrame()` 的不同位置再加一句冗余的 `vkAcquireNextImageKHR()`，可以看到如下的报错：
+>
+> 1. 在 `vkAcquireNextImageKHR()` 后面添加：报错 `Semaphore must not be currently signaled.`；
+> 2. 在 `vkQueueSubmit` 后面添加：报错 `Semaphore must not have any pending operations.`。
+>
+> 所以在 `vkQueueSubmit` 后面添加时报错是一样的，这验证了文档中的说法。
 
 ## 解决方法
 
 在查看不少其他引擎和 vulkan sample 之后，可以看到他们都是先设定一个最大的同时绘制帧的数量（后续称为 MAX_CONCURRENT_FRAMES），即 vulkan tutorial 中的 inFlight 帧，这个数量会小于等于 swapchain image 的数量。然后使用 MAX_CONCURRENT_FRAMES 数目的 presentCompleteSemaphores、renderCompleteSemaphores 来标志 swapchain image 的可用情况，使用 MAX_CONCURRENT_FRAMES 数目的 Fence 来标志 commandbuffer 是否已经完成执行。
 
-在我们的引擎中，使用了 3 个 fence 来进行 CPU 和 GPU 之间的同步，意味着有 3 个飞行帧。但是 SCIsemaphore 数目为 1，就会导致在 Acquire Image 时 SCIsemaphore 依然处于 signaled 状态。
+在我们的引擎中，使用了 3 个 fence 来进行 CPU 和 GPU 之间的同步，意味着有 3 个飞行帧。但是 SCIsemaphore 数目为 1，就会导致在 Acquire Image 时 SCIsemaphore 依然处于 signaled 状态或者是有未执行的操作。
 
 最简单的解决方法就是将 SCIsemaphore 与飞行帧关联起来，即数目改成和飞行帧的数目一样，然后在 Acquire Image 和 Queue Submit 中分别 signal 和 wait 对应飞行帧的 SCIsemaphore，这样就能保证专帧专用。
 
+## 总结
+
+最好对于同时绘制的每个飞行帧，都创建对应的 semaphore 和 commandbuffer（还有用于 commandbuffer 的fence），然后对于每一帧，都使用 waitFence 来保证它的 acquire/draw/present 完成。
+
+> 也参考了部分 [Vulkan Tutorial中的同步问题 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/454825408)。
