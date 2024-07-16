@@ -36,7 +36,7 @@ swapchain 中所有的 image 和对应的 imageView 都放在这里面（一般�
 
 在 semaphore 方面使用了 `imageAvailableSemaphores` 指明当前 SCimage **可用**，当 `FRAMES_IN_FLIGHT` 为1时实际上变为单个semaphore，并且在此版本的 sdk 中不报错。后续使用 `imageAvailableSemaphore` 来指代 `FRAMES_IN_FLIGHT` 为1时的 `imageAvailableSemaphores`。
 
-在 fence 方面，由于每帧都要**重新录制 commandbuffer**，所以对当前帧，host 端需要等待 commandbuffer 在 GPU 中使用完毕，才能再次录制，素以使用了 inFlightFence 来指明这一帧中 commandbuffer 都使用完毕了。
+在 fence 方面，由于每帧都要**重新录制 commandbuffer**，所以对当前帧，host 端需要等待 commandbuffer 在 GPU 中使用完毕，才能再次录制，素以使用了 inFlightFence 来指明这一帧中 commandbuffer 都使用完毕了。这里“commandbuffer 都使用完毕”隐式说明了其中的操作都已经完成。
 
 `imageAvailableSemaphore` 主要用在 `vkAcquireNextImageKHR()` 和 `vkQueueSubmit()` 的 `VKSubmitInfo::pWaitSemaphores` 中。
 
@@ -60,7 +60,7 @@ swapchain 中所有的 image 和对应的 imageView 都放在这里面（一般�
 >
 > 还有一篇 slide 值得一看：[Slide 1 (nvidia.com)](https://developer.download.nvidia.com/gameworks/events/GDC2016/mschott_lbishop_gl_vulkan.pdf)
 
-> `vkAcquireNextImageKHR()` 在无 image 可用，且未超时时，会阻塞，见[VK_KHR_swapchain(3) (khronos.org)](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_swapchain.html) Issues 7。无 image 可用指的是 swapchain 中的 imageCount 为 0。其他的大多数情况下不会阻塞，可以看作不阻塞。所以它会直接返回 `pImageIndex`，等到对应的 image 可用后将 semaphore 置为 signaled。
+> `vkAcquireNextImageKHR()` 在无 image 可用，且未超时时，会阻塞，见[VK_KHR_swapchain(3) (khronos.org)](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_swapchain.html) Issues 7。无 image 可用指的是 swapchain 中所有 image 都不处于 available 状态。
 >
 > `vkQueueSubmit()` 不会阻塞。
 >
@@ -105,7 +105,7 @@ swapchain 中所有的 image 和对应的 imageView 都放在这里面（一般�
 
 在第二帧时，又等待了对应的 fence（实际上并未等待），acquire image 准备 signal 的 semaphore 依然是 SCIsemaphore，但是此时上一个 queueSubmit 中的命令可能还未开始执行，所以 SCIsemaphore 可能依然是 signaled 的状态，此时去 signal 一个 signaled 的信号量是不被支持的，所以验证层会报错。
 
-简单来说，就是第二帧的 image 准备好了，和第一帧共用一个 semaphore，由于未等待 fence（为了等待第一帧的 present 完成，实际上第一帧的 image 很可能还未开始绘制），所以这个 semaphore 上还有未进行的操作，造成了冲突。
+简单来说，就是第二帧的 image 准备好了，和第一帧共用一个 semaphore，由于未等待 fence（为了等待第一帧的 present 完成，实际上第一帧的 image 很可能还未开始绘制），所以这个 semaphore 上还有未进行的操作（pending operation），造成了冲突。
 
 如果是从第四帧开始，那么不会造成冲突。
 
@@ -117,6 +117,14 @@ swapchain 中所有的 image 和对应的 imageView 都放在这里面（一般�
 > 2. 在 `vkQueueSubmit` 后面添加：报错 `Semaphore must not have any pending operations.`。
 >
 > 所以在 `vkQueueSubmit` 后面添加时报错是一样的，这验证了文档中的说法。
+>
+> 另外还做了实验，将 `drawFrame()` 中开头的 `vkWaitForFences` 挪到 `vkAcquireNextImageKHR()` 后面，可以在第三帧和第四帧看到一样的报错。
+
+**总结**：
+
+实际上 QueueSubmit 中等待的 semaphore 与 commandBuffer 有隐式关联，它将 semaphore 变成 unsignaled，并且只有当 commandBuffer 中的指令都执行完毕，这个 semaphore 才能再次被 signal，即 semaphore 才是可用的。
+
+`vkAcquireNextImageKHR` 会去 signal 上面那个 semaphore。所以实际上 `vkAcquireNextImageKHR` 是需要进行等待的（等待 commandBuffer 中的指令都执行完毕），但是它自己是立即执行的，这个时候就需要使用其他的同步机制，比如说 fence 来等待。但是在 wait fence 的时候有讲究，如果在 `vkAcquireNextImageKHR` 之前等待，等待的是此帧的 semaphore 可用；如果在 `vkAcquireNextImageKHR` 之前等待，等待的是上一帧的 semaphore 可用。
 
 ## 解决方法
 
@@ -124,10 +132,26 @@ swapchain 中所有的 image 和对应的 imageView 都放在这里面（一般�
 
 在我们的引擎中，使用了 3 个 fence 来进行 CPU 和 GPU 之间的同步，意味着有 3 个飞行帧。但是 SCIsemaphore 数目为 1，就会导致在 Acquire Image 时 SCIsemaphore 依然处于 signaled 状态或者是有未执行的操作。
 
-最简单的解决方法就是将 SCIsemaphore 与飞行帧关联起来，即数目改成和飞行帧的数目一样，然后在 Acquire Image 和 Queue Submit 中分别 signal 和 wait 对应飞行帧的 SCIsemaphore，这样就能保证专帧专用。
+最简单的解决方法就是将 SCIsemaphore 与飞行帧关联起来，即数目改成和飞行帧的数目一样，然后在 Acquire Image 和 Queue Submit 中分别 signal 和 wait 对应飞行帧的 SCIsemaphore，这样就能保证专帧专用。同时在 Acquire Image 前添加等待 fence。
 
 ## 总结
 
-最好对于同时绘制的每个飞行帧，都创建对应的 semaphore 和 commandbuffer（还有用于 commandbuffer 的fence），然后对于每一帧，都使用 waitFence 来保证它的 acquire/draw/present 完成。
+最好对于同时绘制的每个飞行帧，都创建对应的 semaphore 和 commandbuffer（还有用于 commandbuffer 的 fence），然后对于每一帧，都使用 waitFence 来保证 acquire 时commandbuffer 中所有命令都已完成，使用 semaphores 来在 GPU 端使 acquire/draw/submit/present 按顺序执行。
 
-> 也参考了部分 [Vulkan Tutorial中的同步问题 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/454825408)。
+1. 在每帧开始时，先 waitFence，等待此帧对应的 commandbuffer 的 fence，再 acquire。
+2. 在 acquire 中添加指示 image 可用的 imageAvailableSemaphore。
+3. 在重新录制指令到此帧对应的 commandbuffer 之前，resetFence。
+4. 在 queueSubmit 时，等待 imageAvailableSemaphore，同时将 signalFence 设置为此帧对应的 commandbuffer 的 fence，添加指示渲染完成的 renderFinishedSemaphore。
+5. 在 present 中，等待 renderFinishedSemaphore。
+
+> 也参考了部分 [Vulkan Tutorial中的同步问题 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/454825408) 和它的图
+>
+> ![](https://pic2.zhimg.com/80/v2-447ecd30478ab3dd11d9b258ea7d14d5_720w.webp)
+>
+> 或者按照 [Vulkan validation error with SDK 1.3.275 · Issue #7236 · ocornut/imgui (github.com)](https://github.com/ocornut/imgui/issues/7236) 中说所的，在 `vkAcquireNextImageKHR` 之后等待 fence，但是需要一个额外的 semaphore。
+
+## Additional
+
+根据 Vulkan validation doc 中的 [VkSemaphore / vvl::Semaphore](https://github.com/KhronosGroup/Vulkan-ValidationLayers/blob/main/docs/fine_grained_locking.md#vksemaphore--vvlsemaphore) 章节所述，与 `vkQueuePresentKHR()` 或 `vkAcquireNextImageKHR()` 一起使用的信号量必须特殊处理，因为状态跟踪器目前无法可靠地知道这些信号量何时改变状态。（这会造成很多误报）
+
+所以当使用 `vkQueueSubmit(work: A, signal: renderFinished, wait: imageAvailableSemaphore, signal: inFlightFence)` 提交指令到 queue 中，等待 `imageAvailableSemaphore` 时，如果 queue 中的指令没有运行完，而又在接下来的 `vkAcquireNextImageKHR()`中使用了 `imageAvailableSemaphore` 时，验证层就直接报错，因为它无法判断此信号量何时改变状态。但是如果 `inFlightFence` 被 signal，就表明指令必然已经运行完了，此时 `imageAvailableSemaphore` 的信号量一定改变了状态，所以验证层不报错。
