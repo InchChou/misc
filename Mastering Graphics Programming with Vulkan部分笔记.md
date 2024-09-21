@@ -145,3 +145,18 @@ GPU 执行模型称为单指令多线程 (Single Instruction, Multiple Threads, 
 - 使用 task 和 mesh shader 处理 meshlet，实现背面和视锥体剔除
 - 使用 compute shader 实现有效的遮挡剔除
 - 使用 indirect drawing functions 在 GPU 上生成 draw commands
+
+每个 mesh 通常被分为顶点组（每组 64 个顶点），即 meshlet。
+
+> [漫谈网格着色器 mesh shader - 哔哩哔哩 (bilibili.com)](https://www.bilibili.com/read/cv31632564/)
+
+会给每个 meshlet 添加一些额外数据：
+
+- meshlet 的 bounding shpere，用于视锥体和遮挡剔除
+- meshlet 锥（meshlet cone），用于背面剔除
+
+本章中使用了 [zeux/meshoptimizer](https://github.com/zeux/meshoptimizer) 来生成 meshlet。每个 meshlet 除了顶点数据和 primitive 数据之外，还有一个 `meshopt_Bounds` 数据用于剔除，这个数据是此 meshlet 的圆锥简易表达（cone），包括中心 center、半径 radius、顶点 apex、轴 axis、cutoff 角。
+
+在 task shader 中，可以通过 cone cull 来进行 meshlet 的背面剔除。然后通过 frustum 的六个面来进行视锥体剔除。然后将顶点索引输出给 mesh shader。
+
+在 mesh shader 中，构建 meshlet 的各种数据，传递给光栅化器。
