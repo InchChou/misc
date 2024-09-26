@@ -137,7 +137,7 @@ GPU 执行模型称为单指令多线程 (Single Instruction, Multiple Threads, 
 
 本章中的布料模拟使用了弹簧模型，见此文章 [GI95.dvi (stanford.edu)](http://graphics.stanford.edu/courses/cs468-02-winter/Papers/Rigidcloth.pdf)
 
-## Chapter 6 GPU-Driven Rendering
+## Chapter 6: GPU-Driven Rendering
 
 此章中，会有：
 
@@ -145,6 +145,8 @@ GPU 执行模型称为单指令多线程 (Single Instruction, Multiple Threads, 
 - 使用 task 和 mesh shader 处理 meshlet，实现背面和视锥体剔除
 - 使用 compute shader 实现有效的遮挡剔除
 - 使用 indirect drawing functions 在 GPU 上生成 draw commands
+
+### Breaking down large meshes into meshlets
 
 每个 mesh 通常被分为顶点组（每组 64 个顶点），即 meshlet。
 
@@ -157,6 +159,143 @@ GPU 执行模型称为单指令多线程 (Single Instruction, Multiple Threads, 
 
 本章中使用了 [zeux/meshoptimizer](https://github.com/zeux/meshoptimizer) 来生成 meshlet。每个 meshlet 除了顶点数据和 primitive 数据之外，还有一个 `meshopt_Bounds` 数据用于剔除，这个数据是此 meshlet 的圆锥简易表达（cone），包括中心 center、半径 radius、顶点 apex、轴 axis、cutoff 角。
 
+### Understanding task an mesh shaders
+
 在 task shader 中，可以通过 cone cull 来进行 meshlet 的背面剔除。然后通过 frustum 的六个面来进行视锥体剔除。然后将顶点索引输出给 mesh shader。
 
 在 mesh shader 中，构建 meshlet 的各种数据，传递给光栅化器。
+
+### GPU culling using compute
+
+算法来源：[GPU-Driven Rendering Pipelines (realtimerendering.com)](https://advances.realtimerendering.com/s2015/aaltonenhaar_siggraph2015_combined_final_footer_220dpi.pdf)
+
+步骤：
+
+1. 使用上一帧的深度缓冲，我们渲染场景中的可见对象并执行 mesh 和 meshlet 的视锥和遮挡剔除。这可能会导致误判（false negtives），例如，在此帧中可见但之前不可见的 mesh 或 meshlet 。我们存储这些对象的列表，以便可以在下一阶段解决任何误判。
+2. 上一步直接在 compute shader 中生成绘制命令列表。此列表将用于使用间接绘制命令绘制可见对象。
+3. 我们现在有一个更新后的深度缓冲区，并且我们也更新了深度金字塔。
+4. 我们现在可以重新测试在第一阶段被剔除的对象并生成一个新的绘制列表以消除任何误报。
+5. 我们绘制剩余的对象并生成最终的深度缓冲区。这将被用作下一帧的起点，然后重复该过程。
+
+#### Depth pyramid generation
+
+类似 mipmap，但是不使用双线性差值的算法去计算低一级别的值，如果用差值算法，我们会计算得到场景中不存在的深度。相反，我们读取想要减少的四个 fragment 并选取最大值。
+
+使用 compute shader 实现这个过程。因为深度从 0（靠近相机）变为 1（远离相机）。下采样时，我们希望四个样本中最远的样本避免过度遮挡(over-occluding)。
+
+#### Occlusion culling
+
+这个剔除步骤完全在 compute shader 中完成。
+
+首先加载当前的 mesh，然后在 view 空间下根据传入的 `mesh_bound` （此时是 bounding_sphere）计算当前 mesh 的 bouding sphere 的位置和半径。注意这是整个 mesh 的 bounding sphere，不是 meshlet 的，我们会对 meshlet 以同样的方式处理。
+
+接下来是 frustum culling，与 tash shader 中的算法一样。
+
+如果 mesh 通过了 frustum culling，我们对它进行 occlusion culling。首先计算透视投影球体的边界正方形。这一步是必要的，因为投影球体的形状可能是椭圆体。算法来源：[2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere (JCGT)](https://jcgt.org/published/0002/02/05/) 和 [zeux/niagara](https://github.com/zeux/niagara/)。
+
+然后检查球体是否完全位于近平面后面。如果是，则无需进一步处理。此处要求将球体坐标的 `z` 值取反，因为我们是看向 `-z` 的方向。
+
+接下来计算 `x` 轴的最小点和最大点。我们只考虑 `xz` 平面，找到球体在这个平面上的投影，并计算这个投影的最小和最大 x 坐标。然后对 `y` 坐标重复相同的过程。计算出的点位于世界空间中，但我们需要它们在透视投影空间中的值，所以用算法将它们转化到投影空间中。得到 `aabb` 的值。
+
+然后将这些值转换到 UV 空间中。UV 空间的坐标在 `[0, 1]` 之间，屏幕空间的坐标在 `[-1, 1]` 之间。我们对 y 使用取反，因为屏幕空间的原点在左下角，而 UV 空间的原点在左上角。
+
+现在有了 mesh sphere 对应的 2D bounding box，现在可以检查它是否被遮蔽。首先根据 depth pyramid 的最高层级的大小缩放刚刚得到的 bounding box，取得到的宽高中最大的那个。根据此值计算 level。这个办法将 bounding box 简化为单个像素查找。请记住，在计算金字塔的 mipmap 时，低一级的 texture 会存储最远的深度值。借助这一点，我们可以安全地查找单个片段来确定 bounding box 是否被遮挡。使用 `depth = textureLod(depthTexture, position, level)` 来获取 depth mipmap 中对应位置和 level 的深度值。
+
+然后计算 bounding sphere 的最近的深度值。
+
+最后检查球体的深度与从金字塔读取的深度来确定球体是否被遮挡。
+
+如果 mesh 通过了视锥体和遮挡剔除，我们将这个 command 加入到 command list 中。我们用这个 command list 来绘制可见的 mesh 的 meshlet，并更新 depth pyramid。
+
+最后一步是重新运行在第一遍中丢弃的网格的剔除。使用更新后的深度金字塔，我们可以生成一个新的命令列表来绘制任何被错误剔除的网格。
+
+
+
+## Chapter 7: Rendering Many Lights with Clustered Deferred Rendering
+
+有以下内容：
+
+- clustered lighting 简史
+- G-buffer 的设置与实现
+- 使用屏幕 tile 和 Z-binning 的 clustered lightling
+
+### A brief history of clustered lightling
+
+2000 年之前，实时渲染程序基本上都使用 forward rendering。前向渲染的光源数一般比较少，可能的值为 4 或 8。
+
+1988 年提出了 deferred rendering 的概念，它只对同样的像素只着色一次。
+
+另一个关键概念 G-buffer（geometric buffer）是通过文章 《Comprehensible Rendering of 3D Shapes》 引入的。
+
+后面 defferred rendering 被绝大多数引擎所采用。
+
+2012 年 AMD 发布了叫做 Leo 的 demo，带来了 Forward+。它为每个屏幕空间 tile 带来了光源列表。
+
+这些年更加精细的细分算法得到了开发，其中 tile 变成 cluster，并从简单的 2D 屏幕空间图块转变为完全截头体形状的 3D 集群。
+
+Cluster 是个很好的点子，但是在 3D 网格中会消耗很多内存。
+
+目前最先进的聚类技术来自 Activision，这是此书选择的解决方案，将在本章的“Implementing light clusters”部分详细介绍它。
+
+#### Differences between forward and deferred techniques
+
+前向和后向渲染之间的最主要区别：**light assignment**。
+
+前向渲染的主要优点：
+
+- 在渲染材质时有完全的自由度
+- 对于不透明和透明物体使用同一个 rendering path
+- 支持 MSAA
+- 在 GPU 上使用较低的内存带宽
+
+其缺点为：
+
+- 为了减少 fragment shade 数量，需要有 depth prepass。
+- 场景着色的复杂性是对象数量 (N) 乘以灯光数量 (L)。
+- 着色器复杂，需要执行大量操作，GPU register 压力大，会影响性能。
+
+
+
+延迟渲染（有时称为延迟着色）的引入主要是为了将几何图形的渲染与光计算分离开来。在延迟渲染中，我们创建了多个渲染目标。通常，我们有一个用于反照率、法线、PBR 参数（粗糙度、金属度和遮挡）和深度的渲染目标。其主要优点为：
+
+- 减少着色复杂度
+- 不需要 depth prepass
+- 着色器不那么复杂
+
+缺点为：
+
+- 高内存使用
+- 法线精度丢失：法线通常为 16 位浮点数，为了减少内存使用，通常将它压缩到 8 位
+- 透明物体需要单独的 pass 并且需要使用前向渲染
+- 特殊材质需要将它们的参数打包进 G-buffer
+
+
+
+共同的问题：在处理单个对象或片段时，我们必须遍历所有 light。有两种最常用的方法来解决：tiles 和 clusters。
+
+- Light tiles：在屏幕空间中创建一个 grid，并确定哪些灯光会影响给定的 tile。渲染场景时，我们确定要着色的片段属于哪个图块，并且我们只迭代覆盖该图块的灯光。
+- Light clusters：灯光簇将视锥体细分为 3D 网格。与图块一样，灯光被分配给每个 cell，并且在渲染时，我们仅迭代给定片段所属的灯光。大多数实现会为每个光构建轴对齐边界框 (AABB) 并将它们投影到 clip 空间中。
+
+### Implementing a G-buffer
+
+1. 在 Vulkan 中设置多个 render target 的第一步是创建 framebuffer（存储 G-buffer 数据） 和 renderpass。为了简化这些创建，使用了 `VK_KHR_dynamic_rendering` 扩展
+2. 有了此扩展，我们不需要提前创建 renderpass 和 framebuffer。只需要在 `VkPipelineRenderingCreateInfoKHR` 中指定 attachment 的格式即可，再将它链接到 `VkGraphicsPipelineCreateInfo.pNext` 中。
+3. 在渲染时，不使用 `vkCmdBeginRenderPass`，而是 `vkCmdBeginRenderingKHR`。使用 `VkRenderingAttachmentInfoKHR` 数组来指定 attachment。
+4. 填充 attachment 数组
+5. 对于 depth attachment 也填充同样的数据结构
+6. 填充 `VkRenderingInfoKHR` 结构体，传入 `vkCmdBeginRenderingKHR` 中。完成渲染后使用 `vkCmdEndRenderingKHR` 代替 `vkCmdEndRenderPass`。
+
+本章的 G-buffer 有四个渲染目标以加上一个深度缓冲区。使用各种压缩手段，将渲染目标压缩以减轻贷款压力。
+
+### Implementing light clusters
+
+算法基于 [Rendering of COD:IW (activision.com)](https://www.activision.com/cdn/research/2017_Sig_Improved_Culling_final.pdf)，有以下步骤：
+
+1. 根据相机空间中的深度值对灯光进行排序。
+2. 然后，我们将深度范围划分为大小相同的 bin。
+3. 接下来，如果灯光的边界框在 bin 范围内，我们会将灯光分配给每个 bin。我们只存储给定 bin 的最小和最大灯光索引，因此每个 bin 只需要 16 位，除非您需要超过 65,535 个灯光
+4. 我们将屏幕划分为图块（在我们的例子中为 8x8 像素），并确定哪些灯覆盖给定的图块。每个图块将存储活动光源的位域表示。
+5. 给定我们想要着色的片段，我们确定片段的深度并读取 bin 索引。
+6. 最后，我们从该 bin 中的最小光源 index 到最大光源 index 数进行迭代，并读取相应的图块以查看光是否可见，这次使用 x 和 y 坐标来检索图块。
+
+该解决方案提供了一种非常有效的方法来循环遍历给定片段的活动光源。
