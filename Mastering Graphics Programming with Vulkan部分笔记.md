@@ -299,3 +299,75 @@ Cluster 是个很好的点子，但是在 3D 网格中会消耗很多内存。
 6. 最后，我们从该 bin 中的最小光源 index 到最大光源 index 数进行迭代，并读取相应的图块以查看光是否可见，这次使用 x 和 y 坐标来检索图块。
 
 该解决方案提供了一种非常有效的方法来循环遍历给定片段的活动光源。
+
+#### CPU lights assignment
+
+在每帧，我们有以下步骤：
+
+1. 按照光源的深度值将它们排序
+2. 为了避免对灯光列表进行排序，我们仅对灯光索引进行排序。这个优化手段使得我们只需要上传一次光源矩阵数据即可，然后只需要更新排序后的索引。
+3. 进行图块分配，使用位域数组等计算并存储光源索引。
+3. 将光源位置转换到相机空间，如果光源位于相机后面则不处理
+3. 计算光源的AABB的角点投影到 clip 空间中的位置，形成一个四边形
+3. 计算四边形在 screen space 中的大小，如果光源在 screen 中不可见，则处理下一个光源
+3. 设置光源覆盖的 tiles 对应的位域数组
+
+然后将光源 tiles 和 bin 数据上传到 GPU 中。
+
+#### GPU light processing
+
+使用刚才上传的数据进行光照计算：
+
+1. 首先决定当前 fragment 属于哪个深度 bin。
+2. 从 bin 的数据中，取出最小和最大灯光索引，将它们用于光源的计算循环。
+3. 然后计算 tile 位域数组中的位置，检查在此深度 bin 中是否有光源存在
+4. 如果 `min_light_id` 为 0，则说明此深度 bin 中无光源，所以没有光源会影响此 fragment。计算光源的 word id 和 bit id
+5. 通过 word id 和 bit id 从对应 tile 的位域数组中取得对应光源的 flag（是否 active），来查看是否来自此 bin 中的光源是否同样影响了此 tile。如果影响了此 tile，则计算每个影响光源对此 fragment 的贡献。
+
+## Chapter 8: Adding Shadows Using Mesh Shaders
+### A brief history of shadow techniques
+
+**Shadow volumes**
+
+被定义为三角形的每个顶点沿光线方向向无穷远处的投影，从而创建一个体积。得到的阴影非常锐利。
+
+其问题在于需要大量 geometry 计算，填充率高。
+
+**Shadow mapping**
+
+从光的角度渲染场景并保存每个像素的深度。之后，当从摄像机的角度渲染场景时，可以将像素位置转换到阴影坐标系，并根据阴影图中的相应像素进行测试，以查看当前像素是否处于阴影中。
+
+**Raytraced shadows**
+
+为屏幕上的每个像素追踪朝向影响像素的每个光源的一条光线，并计算对该像素的最终阴影贡献。
+
+### Implementing shadow mapping using mesh shaders
+
+第一步是剔除灯光下的 mesh 实例。这是在计算着色器中完成的，并将保存每个灯光的可见 mesh 实例列表。mesh 实例稍后用于检索相关网格，per-meshlet culling 稍后将使用任务着色器执行。
+
+第二步是在 compute shader 中将 meshlet 参数写入 indirect draw 命令中，以便后续渲染 meshlet 到阴影贴图。
+
+第三步是使用 indirect mesh shader 来绘制 meshlet 到阴影贴图。使用分层的 cubemap shadow texture，每一个 layer 对应一个光源。
+
+最后第四步是在对场景进行光照时使用这个 shadow texture。
+
+#### Cubemap shadows
+
+#### A note about multiview rendering
+
+Multiview Rendering：此扩展广泛用于虚拟现实应用程序，用于在立体投影的两个视图中渲染顶点，也可以与立方体贴图一起使用。
+
+#### Per-light mesh instance culling
+
+首先在 compute shader 中进行粗粒度的剔除，这里使用 mesh 和其 bounding volumes 作为链接到 meshlet 的更高层次结构。测试 light 的 bounding sphere 和 mesh 的 bounding sphere 是否相交，如果相交的话，就将此 mesh 相关的 meshlet 添加。
+
+然后输出 per-light meshlet instances，定义为 mesh 实例和 meshlet 索引的组合。
+
+#### Indirect draw commands generation
+
+使用计算着色器为每个光源生成一个 indirect commands list。
+
+会写入 6 个 command，每个 command 对应一个 cubemap 面。
+
+#### Shadow cubemap face culling
+
