@@ -392,3 +392,103 @@ Multiview Rendering：此扩展广泛用于虚拟现实应用程序，用于在�
 然后计算当前 fragment 的原始深度，从光矢量中获取主轴并将其转换为原始深度，用于跟刚才获取到的最近深度进行比较。
 
 > 这里的算法与 [点阴影 - LearnOpenGL CN)](https://learnopengl-cn.github.io/05 Advanced Lighting/03 Shadows/02 Point Shadows/) 中一样
+
+### Improving shadow memory with Vulkan’s sparse resources
+
+我们目前为所有光源的每个立方体贴图分配了全部内存。根据光源的屏幕尺寸，我们可能会浪费内存，因为远处和小光源无法利用阴影贴图的高分辨率。
+
+现在实现一项优化，能够根据摄像机位置动态确定每个立方体贴图的分辨率。有了这些信息，我们就可以管理稀疏纹理，并根据给定帧的要求在运行时重新分配其内存。
+
+稀疏纹理（有时也称为虚拟纹理，virtual textures）在 vulkan 中原生支持。
+
+vulkan 中寻常的资源必须绑定在单个内存分配上，无法绑定到其他分配上。vulkan 暴露了两种方法来让我们可以将资源绑定到内存中的不同地方：
+
+- Sparse resource 允许我们将资源绑定到非连续的内存分配，但需要绑定完整资源。
+- Sparse residency 允许我们将资源部分绑定到不同的内存分配。
+
+在创建资源时需要添加 flag `VK_<resourceType>_CREATE_SPARSE_RESIDENCY_BIT` 和 `VK_<resourceType>_CREATE_SPARSE_BINDING_BIT` 。
+
+使用 vma 分配 pages。
+
+越远的光源对片段的影响越小，所以需要的立方体贴图的分辨率也越小。
+
+在 CPU 端计算出每个光源对应的立方体贴图的最大分辨率，使用这个分辨率的值去绑定 cubemap 的内存。
+
+获取每个 page 的信息后，使用 `VkSparseImageMemoryBind`、`VkSparseImageMemoryBindInfo&`、`VkBindSparseInfo` 和 `vkQueueBindSparse` 来绑定 page 内存和 image。
+
+## Chapter 9: Implementing Variable Rate Shading
+可变速率着色 (VRS) 是一种允许开发人员控制片段着色速率的技术。一般速率会选择 1x1，1x2，2x1，2x2。
+
+一种技术为“注视点渲染（foveated rendering）”：其理念是以全速率渲染图像中心，同时降低中心以外的质量。
+
+选择速率有多种方法，本章中已经实现的是在 lighting pass 之后通过亮度检测边缘。
+
+这个想法是降低图像中亮度均匀区域的着色率，并在过渡区域使用全速率。这种方法之所以有效，是因为与亮度更均匀的区域相比，人眼更容易注意到这些区域的变化。
+
+此章中使用 sobel 算子来检测边缘，在实现中将对 G 值大于 0.1 的片段使用完整的 1x1 速率。
+
+Vulkan 中通过 `VK_KHR_fragment_shading_rate` 扩展来提供 VRS 功能。在此章中，使用 image attachment 来控制 shading rate。在生成 shading rate image attachment 之后，只需要在 `VkRenderingInfoKHR::pNext` 中设置 `VkRenderingFragmentShadingRateAttachmentInfoKHR` 即可。
+
+**Taking advantage of specialization constants**
+
+Specialization constants 是 Vulkan 的一项功能，允许开发人员在创建管道时定义常量值。它们可以在运行时动态控制，而无需重新编译着色器。
+
+比如在本章中，我们希望能够根据我们正在运行的硬件控制计算着色器的工作组大小，以获得最佳性能。
+
+实现的第一步是查看 shader 是否使用了 specialization constants。
+
+然后在解析所有变量时，我们保存specialization constants 的详细信息，以便在编译使用此着色器的管道时使用它们：
+
+有了 specConstant 的信息后，我们可以在创建管线时修改它的值，使用 `VkSpecializationInfo` 和 `VkSpecializationMapEntry`。
+
+ ## Chapter 10: Adding Volumetric Fog
+
+该技术可以实时实现，其可能性源于这样的观察：雾是一种低频效应；因此渲染可以采用比屏幕低得多的分辨率，从而提高实时使用的性能。
+
+### Introducing Volumetric Fog Rendering
+
+体积雾：体积渲染和雾现象的结合。
+
+#### Volumetric Rendering
+
+这种渲染技术描述了光线穿过参与介质时所发生的视觉效果。参与介质是包含密度或反照率局部变化的体积。
+
+我们试图描述的是光在穿过参与介质，即雾量（或云或大气散射）时如何变化。主要有以下三种现象：
+
+- **Absorption 吸收**：当光被困在介质内而无法射出时，就会发生这种情况。这是能量的净损失。
+- **Out-scattering 向外散射**：是从介质中流出（因此可见）的能量损失。
+- **In-Scattering 向内散射**：这是来自与介质相互作用的光的能量。
+
+##### Phase function
+
+相位函数：该函数描述光在不同方向上的散射。它取决于光入射方向和出射方向之间的角度。
+
+如果使用现实方式表示，函数会比较复杂，所以一般使用 Henyey-Greenstein 函数，它也将各向异性考虑在内了：
+$$
+phase(\theta) = \frac{1}{4\pi} \frac{1 - g^{2}}{(1 + g^{2} - 2g \cos\theta)^{3/2}}
+$$
+$\theta$ 是观察方向和光入射方向的夹角
+
+##### Extinction
+
+消光是描述光散射量的量。我们将在算法的中间步骤中使用它，但要应用计算出的雾，我们需要透射率。
+
+##### Transmittance
+
+最后一个组成部分是透射率。透射率是光通过介质的一段时的消光，它使用 Beer-Lambert 定律计算：
+$$
+T(A \rarr B) = e^{-\int^{B}_{A} \beta e(x) dx}
+$$
+
+#### Volumetric Fog
+
+Bart Wronski 最聪明的想法之一是使用视锥对齐体积纹理 Frustum Aligned Volume Texture。
+
+使用体积纹理和与标准光栅化渲染相关的数学运算，我们可以在相机视锥体和纹理之间创建映射。
+
+新颖之处在于将信息存储在体积纹理中以计算体积渲染。此纹理的每个元素通常称为锥体素，代表截头体素。
+
+我们将使用分布函数：
+$$
+Zslice = Near_{z} * (Far_{z}/Near_{z})^{slice/numSlice}
+$$
