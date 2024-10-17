@@ -492,3 +492,66 @@ Bart Wronski 最聪明的想法之一是使用视锥对齐体积纹理 Frustum A
 $$
 Zslice = Near_{z} * (Far_{z}/Near_{z})^{slice/numSlice}
 $$
+步骤如 Figure 10.7 所示。
+
+##### Data injection
+
+第一步是数据注入。此着色器将以颜色和密度的形式将一些彩色雾添加到仅包含数据的第一个 Frustum Aligned Texture 中。
+
+##### Light scattering
+
+在进行光散射时，我们计算来自场景中灯光的散射。使用在 light cluster 中相同的数据结构来计算光源对每个 froxel 的贡献。
+
+同样采样 shadow maps 来实现更加真实的光照效果。
+
+##### Spatial filtering
+
+为了消除一些噪音，我们仅在视锥对齐纹理的 X 和 Y 轴上应用高斯滤波器，然后传递到最重要的滤波器，即时间滤波器。
+
+##### Temporal filtering
+
+此过滤器真正改善了视觉效果，因为它可以在算法的不同步骤中添加一些噪声以消除一些条带。它将读取前一帧的最终纹理（集成之前的纹理），并根据某个常数因子将当前光散射结果与前一个结果混合。
+
+完成散射和消光后，我们可以进行光积分，从而准备场景将要采样的纹理。
+
+##### Light integration
+
+此步骤准备另一个 Frustum Aligned Volumetric Texture 来包含雾的集成。基本上，此着色器模拟低分辨率光线步进 Ray marching，以便场景可以采样此结果。
+
+光线行进通常从相机开始，朝向场景的远平面。视锥对齐纹理与此积分的组合为每个锥素提供了光散射的缓存光线行进，以便场景轻松采样。在此步骤中，从之前纹理中保存的所有消光中，我们最终使用比尔-朗伯定律计算透射率，并使用该定律将雾合并到场景中。
+
+这项技术以及时间过滤是解锁该算法实时可能性的一些重大创新。在更先进的解决方案中，例如在游戏《荒野大镖客 2》中，可以添加额外的光线行进来模拟更远距离的雾。
+
+它还允许混合雾和体积云，使用纯光线行进方法，实现几乎无缝的过渡。
+
+##### Scene application in Clustered Lighting
+
+最后一步是使用世界位置读取光照着色器中的体积纹理。我们可以读取深度缓冲区，计算世界位置，计算锥素坐标并采样纹理。
+
+### Implementing Volumetric Fog Rendering
+
+#### Data injection
+
+我们添加三种不同的雾效应：
+
+- Constant Fog（恒定雾）：这种雾效应在整个场景中保持**均匀的密度**。无论观察者的位置如何，雾的浓度都是一致的。这种雾通常用于创建简单的视觉效果，给场景增加一种模糊感。
+- Height Fog（高度雾）：高度雾通过模拟雾粒子在地面附近的聚集，使得雾的效果更加**物理真实**。在这种情况下，雾的厚度会根据**世界空间的Y轴坐标**而变化，通常在较低的高度雾更浓，而在较高的地方雾的浓度会逐渐减小。
+- Fog in a Volume（体积雾）：体积雾是一种更复杂的雾效应，它在特定的**三维空间内**定义雾的密度和分布。这种雾可以与光源相互作用，产生更真实的光照效果，如光束穿透雾的效果。体积雾通常用于需要更高真实感的场景中。
+
+对于每一种雾，我们需要计算散射和消光并累积它们。
+
+`scattering_extinction += scattering_extinction_from_color_density(...)`
+
+最后将 `scattering_extinction ` 存储到 3D texture 中。
+
+#### Calculating the lighting contribution
+
+光照阶段将使用已在一般光照函数中使用的 Clustered Lighting 数据结构来执行。
+
+还是使用 compute shader，其中每个线程对应一个 froxel。
+
+首先从 injection shader 的结果中读取 scattering 和 extinction。然后使用 clustered bin 来累加光源亮度。光源部分代码与第七章中的一样。
+
+然后将 `phase_function` 添加到 lighting factor 中。使用 lighting factor 和 scattering 计算散射后的亮度值。
+
+最后将 散射后的亮度值和 extinction 保存到 light_scattering texture 中。
