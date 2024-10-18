@@ -555,3 +555,34 @@ $$
 然后将 `phase_function` 添加到 lighting factor 中。使用 lighting factor 和 scattering 计算散射后的亮度值。
 
 最后将 散射后的亮度值和 extinction 保存到 light_scattering texture 中。
+
+#### Integrating scattering and extinction
+
+在着色器中进行光线步进和中间计算。它还是会写入 frustum-aligned texture，但是每个 cell 都包含从此 cell 开始，累加后的 scattering 和 transmittance。
+
+注意我们现在使用的是 transmittance 代替了 extinction。透射率是将消光率积分到特定空间的量。对于这个 compute shader 的 dispatch 仅在 frustum texture 的 X 和 Y 轴上，读取 light scaterring texture，因为我们将积分步骤放入了循环中。
+
+最后可以得到一个包含光线行进散射和透射率值的体积纹理，可以从帧中的任何位置进行查询，以了解该点有多少雾以及雾的颜色。
+
+#### Applying Volumetric Fog to the scene
+
+使用屏幕空间坐标来计算纹理的采样坐标。此函数将在延迟和前向渲染路径的照明计算的末尾使用。
+
+首先计算采样的坐标：将当前 fragment 的屏幕坐标（x, y）和深度 raw_depth 传入 `apply_volumetric_fog()` 中，计算出对应 froxel 的坐标。使用此坐标在 volumetric_fog_texture 3D纹理中进行采样，得到 `scaterring_transmittance` 后计算得到最终的颜色。
+
+至此，完整实现体积雾渲染的必要步骤就结束了。但是，仍然存在一个大问题：带状（banding）。
+
+低分辨率体积纹理会增加带状问题，但这对于实现实时性能是必要的。
+
+#### Adding filters
+
+为了提升视觉效果，添加两个过滤器：时间过滤和空间过滤。
+
+时间滤波器才是真正起到作用的，因为它让我们能够在算法的不同部分添加噪声，从而消除带状。空间滤波器可以进一步消除雾气。
+
+##### Spatial filtering
+
+使用高斯滤波器来平滑 volumetric texture 的 X 轴和 Y 轴。它将读取光散射的结果并写入此时帧中未使用的锥素数据纹理，无需创建临时纹理。
+
+##### Temporal filtering
+
