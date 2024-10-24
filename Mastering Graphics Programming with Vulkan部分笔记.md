@@ -724,3 +724,84 @@ TAA 基于随时间收集样本，通过对相机投影矩阵应用小偏移并�
 基本上，我们将像素视为信号，而不是简单的颜色。（本章后会提供资源深入讨论）。在这一步中，我们将缓存用于限制来自前几帧的颜色的历史边界的信息。
 
 我们需要知道的是，我们在当前像素周围采样另一个 3x3 区域并计算约束发生所需的信息。最有价值的信息是此区域中的最小和最大颜色，方差裁剪 Variance Clipping（我们稍后会介绍）还需要计算平均颜色和平方平均颜色（称为矩）以辅助历史约束。最后，我们还将对颜色采样应用一些过滤。
+
+#### The history constraint
+
+基于前面的步骤，我们创建了一系列我们认为有效的可能颜色值。如果我们将每个颜色通道视为一个值，我们基本上就创建了一个有效颜色区域，我们将根据该区域进行约束。
+
+约束是一种接受或丢弃来自历史纹理的颜色信息的方法，可将重影减少到几乎为零。
+
+我们添加了四个约束来测试：
+
+- RGB clamp
+- RGB clip
+- Variance clip
+- Variance clip with clamped RGB
+
+其中使用 Variance clip with clamped RGB 的质量是最好的。
+
+简而言之，我们尝试在色彩空间中构建一个 AABB，以将历史颜色限制在该范围内，以便最终颜色与当前颜色相比更加合理。
+
+TAA 着色器的最后一步是解析，或者结合当前颜色和历史颜色并应用一些过滤器来生成最终的像素颜色。
+
+#### Resolve
+
+我们将应用一些额外的过滤器来决定前一个像素是否可用，以及可用程度。
+
+第一个过滤器是时空过滤器，使用之前缓存的邻近像素的最小和最大值来计算权重，此权重决定该如何混合当前帧颜色和前一帧颜色。
+
+接下来是另外两个连着的过滤器，它们都与亮度有关，其中一个用于抑制所谓的萤火虫（指很亮的亮点），或者在强光源下图像中可能存在的非常明亮的单个像素，而第二个使用亮度差异进一步将权重转向当前或以前的颜色。
+
+最后我们使用新计算出来的权重来混合得到最终的结果。
+
+关于 TAA 最常见的缺陷是图像的模糊。
+
+### Sharpening the image
+
+简要讨论三种不同的方法来改善图像的锐化。
+
+#### Sharpness post-processing
+
+提高图像清晰度的方法之一是在后期处理链中添加一个简单的锐化着色器。
+
+#### Negative mip bias
+
+减少模糊度的一个全局方法是将 `VkSamplerCreateInfo` 结构中的 `mipLodBias` 字段修改为负数，例如 `-0.25`，从而将纹理 **mip**（纹理的逐渐变小的图像金字塔）转移到更高的值。
+
+#### Unjitter texture UVs
+
+采样更清晰纹理的另一种可能的解决方案是按照相机没有任何抖动的方式计算 UV
+
+TAA 与锐化相结合，大大改善了图像的边缘，同时保留了物体内部的细节。
+
+### Improving banding
+
+带状问题会影响帧渲染的各个步骤。例如，它会影响体积雾和照明计算。
+
+添加时间重投影可以平滑添加的噪声，从而成为改善图像视觉质量的最佳方法之一。
+
+## Chapter12: Getting Started with Ray Tracing
+
+与传统渲染管道相比，光线追踪需要不同的设置。本书用了一整张来介绍如何设置光线追踪管道。将详细介绍如何设置着色器绑定表 Shader Binding Table，以告知 API 在给定光线的相交测试成功或失败时应调用哪些着色器。
+
+### Introduction to ray tracing in Vulkan
+
+引入加速结构（大多数情况下实现为 BVH），包括 BLAS 和 TLAS。
+
+引入着色器绑定表 Shader Binding Table 和 各种 ray tracing 着色器。
+
+### Building the BLAS and TLAS
+
+填充 `VkAccelerationStructureGeometryKHR`、`VkAccelerationStructureBuildRangeInfoKHR`、`VkAccelerationStructureBuildGeometryInfoKHR` 等结构体。使用 `VkAccelerationStructureBuildSizesInfoKHR` 获取创建 AS 所需要内存大小并创建 buffer，之后填充 `VkAccelerationStructureCreateInfoKHR` 结构体，并调用 `vkCmdBuildAccelerationStructuresKHR()` 来创建 BLAS。
+
+之后使用类似的方法创建 TLAS。
+
+#### Defining and creating a ray tracing pipeline
+
+与传统渲染管线不同，光线追踪着色器可以根据着色器绑定表设置调用其他着色器。
+
+在着色器代码中，我们必须使用 `#extension GL_EXT_ray_tracing : enable` 来开启光追功能。使用 `rayPayloadEXT` 作为变量的修饰来指定变量可以在不同着色器中被访问和修改。使用 `accelerationStructureEXT` 来指定加速结构变量。其他的关键字不再赘述。
+
+对于 ray tracing pipeline，我们需要填充 `VkRayTracingShaderGroupCreateInfoKHR` 结构体。
+
+最后需要创建 Shader Binding Table。使用 `vkGetRayTracingShaderGroupHandlesKHR` 从创建好的 pipeline 中获取 shader group 的handle。获取 handle 后我们可以把它们组织成不同的独立 table，使用 buffer 存储这些 table，将这些 buffer 的 deviceAddress 传给 `VkStridedDeviceAddressRegionKHR`。在调用 `vkCmdTraceRaysKHR()` 执行光追管线时，指定这些代表着 shader binding table 的 DeviceAddressRegion。
