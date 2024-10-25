@@ -805,3 +805,26 @@ TAA 与锐化相结合，大大改善了图像的边缘，同时保留了物体�
 对于 ray tracing pipeline，我们需要填充 `VkRayTracingShaderGroupCreateInfoKHR` 结构体。
 
 最后需要创建 Shader Binding Table。使用 `vkGetRayTracingShaderGroupHandlesKHR` 从创建好的 pipeline 中获取 shader group 的handle。获取 handle 后我们可以把它们组织成不同的独立 table，使用 buffer 存储这些 table，将这些 buffer 的 deviceAddress 传给 `VkStridedDeviceAddressRegionKHR`。在调用 `vkCmdTraceRaysKHR()` 执行光追管线时，指定这些代表着 shader binding table 的 DeviceAddressRegion。
+
+## Chapter 13: Revisiting Shadows with Ray Tracing
+### Implementing simple ray-traced shadows
+
+传统技术的主要问题是，它们基于从每个光源的角度捕获深度缓冲区。这对于靠近光源和相机的物体很有效，但随着我们离得越来越远，深度不连续性会导致最终结果中出现伪影。
+
+解决此问题的方法包括过滤结果，例如使用百分比接近过滤 (Percentage Closer Filtering, PCF) 或级联阴影贴图 (Cascade Shadow Maps, CSM)。此技术需要捕获多个深度切片 - 级联在我们远离光线时保持足够的分辨率。这通常仅用于阳光，因为它需要大量内存和时间来多次重新渲染场景。在级联之间的边界上获得良好的结果也相当困难。
+
+阴影贴图的另一个主要问题是，由于深度缓冲区的分辨率及其引入的不连续性，很难获得硬阴影（感觉这里应该是软阴影）。我们可以通过光线追踪缓解这些问题。离线渲染多年来一直使用光线和路径追踪来实现逼真的效果，包括阴影。
+
+我们引入了光线查询 ray query，它允许我们遍历从片段和计算着色器设置的加速结构。
+
+在使用 ray query 之后，我们不需要从每个光源视点计算立方体贴图，而是简单地从片段世界位置向每个光源投射一条射线。
+
+在初始化光线查询相关信息之后，调用 `rayQueryProceedEXT()` 执行光线遍历，它将在发现命中或射线终止时返回。使用射线查询时，我们不必指定着色器绑定表。在本章中，只需要确定光线是否命中了任何几何体。
+
+如果没有命中几何体，则意味着我们可以从该片段中看到我们正在处理的光源，并且可以在最终计算中考虑该光源的贡献。我们对每个光源重复此操作以获得整体阴影项。
+
+这个实现非常简单，但它主要适用于点光源。对于其他类型的光源（例如区域光源），我们需要投射多条射线来确定可见性。随着光源数量的增加，使用这种简单的技术可能会变得过于昂贵。
+
+### Improving ray-traced shadows
+
+上节基于可见性实现了简单的光追阴影算法，但是对于大数量的光源表现不好。本节中实现了一个不同的算法，基于《Ray Tracing Gems》书中 “Ray Traced Shadows” 一文。
