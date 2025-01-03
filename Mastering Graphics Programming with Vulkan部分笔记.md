@@ -616,7 +616,7 @@ $$
 
 近年来，越来越多的游戏开始在核心中使用延迟渲染，而 MSAA 很难应用于延迟渲染，因此这项技术（指 TAA）得到了广泛应用。
 
-在 MSAA 只会，进入了 **Post-Process Anti-Aliasing** 时代，而 PPAA 的第一个广泛使用案例是 Morphological Anti-Aliasing（MLAA）。
+在 MSAA 之后，进入了 **Post-Process Anti-Aliasing** 时代，而 PPAA 的第一个广泛使用案例是 Morphological Anti-Aliasing（MLAA）。
 
 后续开发了其他的继续 PPAA 的技术，这些技术都基于几何边缘识别和图像增强。
 
