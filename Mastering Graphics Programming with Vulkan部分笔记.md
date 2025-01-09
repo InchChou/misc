@@ -1093,7 +1093,7 @@ struct RayPayload {
 
 这个 shader 巧妙地使用已有的信息（在本例中为每个射线探测距离）将探针移出相交几何体。
 
-## Adding Reflections with Ray Tracing
+## Chapter 15: Adding Reflections with Ray Tracing
 
 在光追出来之前，反射一般通过屏幕空间来实现，但是有个问题是，是这种实现只能使用屏幕空间信息，如果有一条光线命中了屏幕空间中没有的几何体，它就没法利用起来了。由于上述限制，这种算法的缺点在于它的一致性不好，需要依赖于相机位置。
 
