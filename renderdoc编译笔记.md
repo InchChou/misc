@@ -123,3 +123,178 @@ index 2fe62571e..42add1c59 100644
  #define RENDERDOC_ANDROID_PACKAGE_BASE "org.renderdoc.renderdoccmd"
 ```
 
+# 用到的脚本和patch
+
+`BuildAPK_Release.ps1` 如下所示：
+
+```powershell
+$env:JAVA_HOME="D:\PortablePrograms\jdk-17.0.2"
+$env:Path="$env:JAVA_HOME\bin;$env:Path"
+
+$env:ANDROID_SDK="D:\PortablePrograms\AndroidSDK"
+$env:ANDROID_NDK="D:\PortablePrograms\AndroidSDK\ndk\27.2.12479018"
+
+$RDCRootPath="D:\chou\proj\analyzeTools\graphics\renderdoc\renderdoc"
+
+$x = Split-Path -Parent $MyInvocation.MyCommand.Definition
+
+function GenerateMakefile{
+    cd $RDCRootPath
+    mkdir build-android
+    cd build-android
+    cmake -DBUILD_ANDROID=On -DANDROID_ABI=armeabi-v7a -DCMAKE_BUILD_TYPE=Release -DSTRIP_ANDROID_LIBRARY=On -G "MinGW Makefiles" ..
+
+    cd $RDCRootPath
+    mkdir build-android64
+    cd build-android64
+    cmake -DBUILD_ANDROID=On -DANDROID_ABI=arm64-v8a -DCMAKE_BUILD_TYPE=Release -DSTRIP_ANDROID_LIBRARY=On -G "MinGW Makefiles" ..
+
+    cd $x
+}
+
+function CompileApk{
+    cd $RDCRootPath
+    cd "build-android"
+    mingw32-make.exe -j12
+
+    cd $RDCRootPath
+    cd "build-android64"
+    mingw32-make.exe -j12
+
+    cd $x
+}
+
+function CopyApkToDir{
+    $targetFolder="$RDCRootPath\x64\Release\plugins\android"
+
+    $source1="$RDCRootPath\build-android\bin\org.renderdoc.renderdoccmd.arm32.apk"
+    $source2="$RDCRootPath\build-android64\bin\org.renderdoc.renderdoccmd.arm64.apk"
+
+    $exist=Test-Path -Path $targetFolder
+    if (-not $exist) {
+        New-Item $targetFolder -type Directory
+        Write-Host("Make new directory $targetFolder")
+    }
+    Copy-Item $source1 -Destination $targetFolder -Force
+    Copy-Item $source2 -Destination $targetFolder -Force
+    Write-Host("Copy done.")
+
+    cd $x
+}
+
+Write-Host("Functin choices:")
+Write-Host("     1. GenerateMakefile")
+Write-Host("     2. CompileApk")
+Write-Host("     3. CopyApkToDir")
+Write-Host("")
+
+$a = Read-Host("     Your choice is")
+
+# Write-Host($a)
+
+if ($a -eq "1") {
+    GenerateMakefile
+} elseif ($a -eq "2") {
+    CompileApk
+} elseif ($a -eq "3") {
+    CopyApkToDir
+} else {
+    Write-Host("Please input 1 or 2 or 3")
+}
+
+cmd /c "pause"
+```
+
+
+
+某些高通手机会在 destroy egl context 时 crash，此时需要修改：
+
+```diff
+diff --git a/renderdoc/driver/gl/egl_hooks.cpp b/renderdoc/driver/gl/egl_hooks.cpp
+index aa288bdbe..b17310ad9 100644
+--- a/renderdoc/driver/gl/egl_hooks.cpp
++++ b/renderdoc/driver/gl/egl_hooks.cpp
+@@ -399,6 +399,7 @@ HOOK_EXPORT EGLBoolean EGLAPIENTRY eglDestroyContext_renderdoc_hooked(EGLDisplay
+   eglhook.driver.SetDriverType(eglhook.activeAPI);
+   {
+     SCOPED_LOCK(glLock);
++    EGL.MakeCurrent(dpy, 0L, 0L, ctx); // must MakeCurrent before delete context, may crash on qcom devices
+     eglhook.driver.DeleteContext(ctx);
+     eglhook.contexts.erase(ctx);
+   }
+```
+
+
+
+`ALooper_pollAll` 被弃用了，替换如下：
+
+```diff
+diff --git a/renderdoccmd/renderdoccmd_android.cpp b/renderdoccmd/renderdoccmd_android.cpp
+index df90d14cc..e441bef34 100644
+--- a/renderdoccmd/renderdoccmd_android.cpp
++++ b/renderdoccmd/renderdoccmd_android.cpp
+@@ -523,7 +523,7 @@ void android_main(struct android_app *state)
+       }
+     }
+ 
+-    if(ALooper_pollAll(1, nullptr, &events, (void **)&source) >= 0)
++    if(ALooper_pollOnce(1, nullptr, &events, (void **)&source) >= 0) //ALooper_pollAll is deprecated
+     {
+       if(source != NULL)
+         source->process(android_state, source);
+```
+
+
+
+某些 astc 纹理不符合spec要求，导致应用crash，修改如下：
+
+```diff
+diff --git a/renderdoc/driver/gl/wrappers/gl_texture_funcs.cpp b/renderdoc/driver/gl/wrappers/gl_texture_funcs.cpp
+index 7b72fd584..33999a5cd 100644
+--- a/renderdoc/driver/gl/wrappers/gl_texture_funcs.cpp
++++ b/renderdoc/driver/gl/wrappers/gl_texture_funcs.cpp
+@@ -3814,7 +3814,8 @@ void WrappedOpenGL::StoreCompressedTexData(ResourceId texId, GLenum target, GLin
+           // image size is not an integer multiple of the block size, so we need to take into
+           // account that in the loop
+           size_t roundedUpHeight = AlignUp((uint32_t)height, blockSize[1]);
+-          for(size_t y = 0; y < roundedUpHeight; y += blockSize[1])
++          // some astc texture don't meet the spec, height is smaller than roundedUpHeight, cause overflow
++          for(size_t y = 0; y < roundedUpHeight && y < (uint32_t)height; y += blockSize[1])
+           {
+             memcpy(cdData.data() + dstOffset, srcPixels + srcOffset, srcRowSize);
+             srcOffset += srcRowSize;
+
+```
+
+
+
+某些应用启用了不支持的接口，会导致抓帧关闭，此时需要手动开启，修改如下：
+
+```diff
+diff --git a/renderdoc/driver/gl/gl_driver.cpp b/renderdoc/driver/gl/gl_driver.cpp
+index c1e92526a..65a53ab8a 100644
+--- a/renderdoc/driver/gl/gl_driver.cpp
++++ b/renderdoc/driver/gl/gl_driver.cpp
+@@ -2087,6 +2087,19 @@ void WrappedOpenGL::SwapBuffers(WindowingSystem winSystem, void *windowHandle)
+     if(overlay & eRENDERDOC_Overlay_Enabled)
+     {
+       int flags = 0;
++      // maually enable capture for some function
++      const char* enableCaptureunsupportedFunctions[] = {
++        "glEGLImageTargetTexture2DOES"
++      };
++      size_t enableCaptureunsupportedFunctionsLength = sizeof(enableCaptureunsupportedFunctions) / sizeof(const char*);
++      for (size_t index = 0; index < enableCaptureunsupportedFunctionsLength; ++index)
++      {
++        if (m_UnsupportedFunctions.count(enableCaptureunsupportedFunctions[index]) > 0)
++        {
++          RDCWARN("Unsupported %s is used, but we enabled capture.", enableCaptureunsupportedFunctions[index]);
++          m_UnsupportedFunctions.erase(enableCaptureunsupportedFunctions[index]);
++        }
++      }
+       // capturing is disabled if unsupported functions have been used, or this context is legacy
+       if(ctxdata.Legacy() || !m_UnsupportedFunctions.empty())
+         flags |= RenderDoc::eOverlay_CaptureDisabled;
+
+```
+
