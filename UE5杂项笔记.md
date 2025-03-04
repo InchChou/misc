@@ -120,6 +120,8 @@ classDiagram
 
 `FDynamicRHI` 类是图形库的适配层。DynamicRHI 在各个平台的实现都会继承 `IRHICommandContext` 和 `FDynamicRHI` 相应扩展类，各平台通过各自的 `PlatformCreateDynamicRHI()` 来创建 `FDynamicRHI`。
 
+> 同时在 `RHICommandList.h` 中，有个很重要的宏 `FRHICOMMAND_MACRO`，UE 用它声明了近百种 RHI 指令。渲染线程创建这些声明好的RHI指令即可在合适的被推入RHI线程队列并被执行，使用方法为调用 FRHICommandList 实例的对应命令的接口，如 `RHICmdList.DrawPrimitive` 等，这些接口会分配对应的 RHI 命令。
+
 ### RenderCommand
 
 FRenderCommand 是一个更高层次的抽象,通常用于封装渲染逻辑。而FRHICommand 是一个更低层次的抽象，直接与图形API交互，用于封装底层的图形API调用。
@@ -205,3 +207,7 @@ TTask = TEnqueueUniqueRenderCommandType<RenderCommandTag, LambdaType>
 通过 `TGraphTask<TEnqueueUniqueRenderCommandType<FRenderCommandTag_SlateDrawWindowsCommand1373, LambdaType>>::CreateTask()` 得到一个 `FConstructor`，`FConstructor::ConstructAndDispatchWhenReady()` 中调用 `ConstructAndHoldImpl()`, `ConstructAndHoldImpl()` 中 New 了一个 `TTask`，即`TEnqueueUniqueRenderCommandType<FRenderCommandTag_SlateDrawWindowsCommand1373, LambdaType>` 实例，此实例包装在 `TGraphTask<>` 中，调用 `Init()` 初始化后返回。后续执行 Task 时，调用 `TGraphTask::Execute()` （Execute 函数为基类 `UE::Tasks::Private::FTaskBase` 的纯虚函数，`TGraphTask` 实现了它）来执行刚才 `TEnqueueUniqueRenderCommandType` 实例中的 `DoTask()` 函数。
 
 [【视频资料整理】多线程渲染 Parallel Rendering In UE5 UOD2022\] - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/662225541)
+
+在 UE5.5.3 中，`TaskGraphDefinitions.h` 定义了宏 `#define TASKGRAPH_NEW_FRONTEND 1` 用来表示使用新 TaskGraph 前端。先将它改为 0，阅读以前的 task graph 源码。
+
+在 Task Graph 后端这部分，UE5 相对于 UE4 改动不小，可以参考：[UE5 多线程之TaskGraph - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/4993171865)
