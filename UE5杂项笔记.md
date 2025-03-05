@@ -49,6 +49,10 @@
   > `[do_while{ ProcessTasksNamedThread(QueueIndex, bAllowStall) }] ->`
   >
   > `while(!Queue(QueueIndex).QuitForReturn){ Task->Execute() }`
+  >
+  > 
+  >
+  > 在 `RenderingThreadMain()` 中，调用 `FTaskGraphInterface::Get().AttachToThread(RenderThread)` 将当前线程绑定到 Task Graph 的 ActualRenderingThread 槽位中。
 
 至此就是 Render Thread 的创建和运行流程了，它不断读取 task graph queue 中的task，然后执行 task。这里的 task 主要通过 `ENQUEUE_RENDER_COMMAND(Type)` 来构造并入队。
 
@@ -80,7 +84,7 @@
 
 RenderThread 的 Task 执行时，会拿到 `RHICommandList RHICmdList`，在其中调用各种接口。
 
-
+> 在 `Run()` 中处理任务之前，使用 `FTaskGraphInterface::Get().AttachToThread(ENamedThreads::RHIThread)` 将当前线程（即 RHI 线程）绑定到 Task Graph 的 RHIThread 槽位中。
 
 ### RHICommand 相关
 
@@ -207,6 +211,10 @@ TTask = TEnqueueUniqueRenderCommandType<RenderCommandTag, LambdaType>
 通过 `TGraphTask<TEnqueueUniqueRenderCommandType<FRenderCommandTag_SlateDrawWindowsCommand1373, LambdaType>>::CreateTask()` 得到一个 `FConstructor`，`FConstructor::ConstructAndDispatchWhenReady()` 中调用 `ConstructAndHoldImpl()`, `ConstructAndHoldImpl()` 中 New 了一个 `TTask`，即`TEnqueueUniqueRenderCommandType<FRenderCommandTag_SlateDrawWindowsCommand1373, LambdaType>` 实例，此实例包装在 `TGraphTask<>` 中，调用 `Init()` 初始化后返回。后续执行 Task 时，调用 `TGraphTask::Execute()` （Execute 函数为基类 `UE::Tasks::Private::FTaskBase` 的纯虚函数，`TGraphTask` 实现了它）来执行刚才 `TEnqueueUniqueRenderCommandType` 实例中的 `DoTask()` 函数。
 
 [【视频资料整理】多线程渲染 Parallel Rendering In UE5 UOD2022\] - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/662225541)
+
+### Task Graph
+
+Task Graph 持有一个线程池，池中分为两大类线程：一类是特殊线程，有 GameThread（即主线程）、RenderThread、RHIThread；另一类是普通线程，它们的优先级比特殊线程稍微低一点。在初始化时，GameThread 会绑定到 Task Graph 的 GameThread 槽位，RenderThread 和 RHIThread 会在创建后运行线程实际函数的时候绑定到对应槽位。
 
 在 UE5.5.3 中，`TaskGraphDefinitions.h` 定义了宏 `#define TASKGRAPH_NEW_FRONTEND 1` 用来表示使用新 TaskGraph 前端。先将它改为 0，阅读以前的 task graph 源码。
 
