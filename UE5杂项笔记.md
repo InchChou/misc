@@ -214,8 +214,10 @@ TTask = TEnqueueUniqueRenderCommandType<RenderCommandTag, LambdaType>
 
 ### Task Graph
 
-Task Graph 持有一个线程池，池中分为两大类线程：一类是特殊线程，有 GameThread（即主线程）、RenderThread、RHIThread；另一类是普通线程，它们的优先级比特殊线程稍微低一点。在初始化时，GameThread 会绑定到 Task Graph 的 GameThread 槽位，RenderThread 和 RHIThread 会在创建后运行线程实际函数的时候绑定到对应槽位。
+Task Graph 持有一个线程池，池中分为两大类线程：一类是 Named 线程（有名字的线程），用来做专门的事情，有 GameThread（即主线程）、RenderThread、RHIThread；另一类是普通线程，用来做其他通用的事情，它们的优先级比 Named 线程稍微低一点。在初始化时，GameThread 会绑定到 Task Graph 的 GameThread 槽位，RenderThread 和 RHIThread 会在创建后运行线程实际函数的时候绑定到对应槽位。
 
 在 UE5.5.3 中，`TaskGraphDefinitions.h` 定义了宏 `#define TASKGRAPH_NEW_FRONTEND 1` 用来表示使用新 TaskGraph 前端。先将它改为 0，阅读以前的 task graph 源码。
 
 在 Task Graph 后端这部分，UE5 相对于 UE4 改动不小，可以参考：[UE5 多线程之TaskGraph - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/4993171865)
+
+[UE多线程机制 - Unreal - Piccolo社区 (piccoloengine.com)](https://www.piccoloengine.com/topic/310472)（图来自于[《Exploring in UE4》多线程机制详解](https://zhuanlan.zhihu.com/p/38881269)）。

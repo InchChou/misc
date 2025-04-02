@@ -27,3 +27,26 @@
 后续模块通过 `FModuleManager` 中的接口来加载、初始化和运行。
 
 在 `FModuleManager::LoadModuleWithFailureReason()` 中，如果 modular 模式，会寻找名字对应的动态库，找到好，就调用 `FInitializeModuleFunctionPtr InitializeModuleFunctionPtr = FModuleInitializerEntry::FindModule(*InModuleName.ToString());` 来获取 `Initialize<Name>Module` 指针（即 `InitializeMyDemoModule` 函数），然后调用这个函数指针实例化出来一个真正的模块。之后初始化、运行它。
+
+
+
+## 引擎初始化
+
+[剖析虚幻渲染体系（01）- 综述和基础 - 0向往0 - 博客园 (cnblogs.com)](https://www.cnblogs.com/timlly/p/13877623.html#1462-引擎初始化)
+
+引擎初始化要分编辑器和非编辑器两种模式，非编辑器执行的是`FEngineLoop::Init`，编辑器执行的是 `EditorInit`+`FEngineLoop::Init`
+
+引擎初始化的流程由`FEngineLoop::Init`完成，它的主要流程如下：
+
+- 根据配置文件创建对应的游戏引擎实例并存储到`GEngine`， 后面会大量使用到`GEngine`实例。
+  - 如果是非编辑器模式，则会创建 `UGameEngine`：
+    - `EngineClass = StaticLoadClass( UGameEngine::StaticClass(), nullptr, *GameEngineClassName)`;
+    - `GEngine = NewObject<UEngine>(GetTransientPackage(), EngineClass)`
+  - 如果是编辑器模式，则会创建 `UUnrealEdEngine`：
+    - `EngineClass = StaticLoadClass(UUnrealEdEngine::StaticClass(), nullptr, *UnrealEdEngineClassName);`
+    - `GEngine = GEditor = GUnrealEd = NewObject<UUnrealEdEngine>(GetTransientPackage(), EngineClass)`。
+- 根据是否支持多线程判断是否需要创建EngineService实例。
+- 执行`GEngine->Start()`。
+- 加载Media、AutomationWorker、AutomationController、ProfilerClient、SequenceRecorder、SequenceRecorderSections模块。
+- 开启线程心跳FThreadHeartBeat。
+- 注册外部分析器FExternalProfiler。
