@@ -14,21 +14,23 @@
 
   > `EnginePreInit(CmdLine) ->`
   >
-  > `FEngineLoop::PreInitPostStartupScreen(CmdLine) -> `
+  > - `FEngineLoop::PreInit() ->`
   >
-  > `InitRenderingThread() -> `
+  >   - `FEngineLoop::PreInitPostStartupScreen(CmdLine) -> `
   >
-  > `StartRenderingThread() -> `
+  >     - `InitRenderingThread() -> `
   >
-  > `[GRenderingThreadRunnable = new FRenderingThread()] -> `
+  >       - `StartRenderingThread() -> `
   >
-  > `[GRenderingThread = FRunnableThread::Create(GRenderingThreadRunnable...)] -> `
+  >         - `[GRenderingThreadRunnable = new FRenderingThread()] -> `
   >
-  > `FRunnableThread::SetupCreatedThread(InRunnable=GRenderingThreadRunnable...) -> `
+  >         - `[GRenderingThread = FRunnableThread::Create(GRenderingThreadRunnable...)] -> `
   >
-  > `FRunnableThread::CreateInternal() -> `
+  >           - `FRunnableThread::SetupCreatedThread(InRunnable=GRenderingThreadRunnable...) -> `
   >
-  > `CreateThread(..., _ThreadProc, this, ...)`
+  >             - `FRunnableThread::CreateInternal() -> `
+  >
+  >             - `CreateThread(..., _ThreadProc, this, ...)`
   >
   > 
   >
@@ -40,15 +42,11 @@
 
   > `FRenderingThread::Run() -> `
   >
-  > `RenderingThreadMain( TaskGraphBoundSyncEvent ) -> `
-  >
-  > `FTaskGraphInterface::Get().ProcessThreadUntilRequestReturn(RenderThread) -> `
-  >
-  > `FNamedTaskThread::ProcessTasksUntilQuit(QueueIndex) -> `
-  >
-  > `[do_while{ ProcessTasksNamedThread(QueueIndex, bAllowStall) }] ->`
-  >
-  > `while(!Queue(QueueIndex).QuitForReturn){ Task->Execute() }`
+  > - `RenderingThreadMain( TaskGraphBoundSyncEvent ) -> `
+  >  - `FTaskGraphInterface::Get().ProcessThreadUntilRequestReturn(RenderThread) -> `
+  >     - `FNamedTaskThread::ProcessTasksUntilQuit(QueueIndex) -> `
+  >      - `[do_while{ ProcessTasksNamedThread(QueueIndex, bAllowStall) }] ->`
+  >         - `while(!Queue(QueueIndex).QuitForReturn){ Task->Execute() }`
   >
   > 
   >
@@ -68,17 +66,15 @@
 
 > `StartRenderingThread() ->`
 >
-> `[case ERHIThreadMode::DedicatedThread:] ->`
+> - `[case ERHIThreadMode::DedicatedThread:] ->`
 >
-> `[GRHIThread = new FRHIThread()] ->`
+> - `[GRHIThread = new FRHIThread()] ->`
 >
-> `FRunnableThread::Create(this, ...) ->`
+>   - `FRunnableThread::Create(this, ...) ->`
 >
-> `FRunnableThread::SetupCreatedThread(InRunnable=GHIThread, ...) ->`
->
-> `FRunnableThread::CreateInternal() -> `
->
-> `CreateThread(..., _ThreadProc, this, ...)`
+>   - `FRunnableThread::SetupCreatedThread(InRunnable=GHIThread, ...) ->`
+>    - `FRunnableThread::CreateInternal() -> `
+>       - `CreateThread(..., _ThreadProc, this, ...)`
 
 其实流程与 Render Thread 大体一样，只不过要判断 RHI 线程是否要在分离线程中运行。后续创建好之后，调用 `FRHIThread::Run()`，在 `Run()` 中也进入到 TaskGraph 中处理任务：`FTaskGraphInterface::Get().ProcessThreadUntilRequestReturn(ENamedThreads::RHIThread)`。
 
@@ -142,19 +138,16 @@ FRenderCommand 是一个更高层次的抽象,通常用于封装渲染逻辑。�
 >
 > `FRenderThreadCommandPipe::Enqueue(Lambda) ->`
 >
-> `TGraphTask<TEnqueueUniqueRenderCommandType<RenderCommandTag, LambdaType>>::CreateTask().ConstructAndDispatchWhenReady(MoveTemp(Lambda)) ->`
->
-> `FTaskBase::TryLaunch() ->`
->
-> `FTaskBase::TryUnlock() ->`
->
-> `FTaskBase::Schedule() ->`
->
-> `[计算应该在哪个线程运行] -> FTaskGraphInterface::Get().QueueTask() ->`
->
-> `[获取对应线程的 FTaskThreadBase] -> [Target->EnqueueFromXXXThread(QueueToExecuteOn, Task)] ->`
->
-> `Queue(QueueIndex).StallQueue.Push(Task, PriIndex)`
+> - `TGraphTask<TEnqueueUniqueRenderCommandType<RenderCommandTag, LambdaType>>::CreateTask().ConstructAndDispatchWhenReady(MoveTemp(Lambda)) ->`
+>   - `FConstructor::ConstructAndDispatchWhenReady() ->`
+>     - `FConstructor::ConstructAndHoldImpl() ->`
+>     - `FTaskBase::TryLaunch() ->`
+>       - `FTaskBase::TryUnlock() ->`
+>         - `FTaskBase::Schedule() ->`
+>           - `[计算应该在哪个线程运行] -> FTaskGraphInterface::Get().QueueTask() ->`
+>             - `[获取对应线程的 FTaskThreadBase] -> [Target->EnqueueFromXXXThread(QueueToExecuteOn, Task)] ->`
+>               - `FNamedTaskThread::EnqueueFromXXXThread() ->`
+>                 - `Queue(QueueIndex).StallQueue.Push(Task, PriIndex)`
 
 
 
