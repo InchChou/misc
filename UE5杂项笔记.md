@@ -100,6 +100,7 @@ classDiagram
 		-PersistentState
 		+CreateXXX()
 		+UpdateXXX()
+		-Execute()
 	}
 
 	class FRHIComputeCommandList{
@@ -112,11 +113,14 @@ classDiagram
 		+DrawXXX()
 		+SetGraphicsPipelineState()
 		+BeginRenderPass()
+		-Execute()
 	}
 	
 	FRHICommandList <|-- FRHICommandListImmediate
 	FRHICommandList <|-- FRHICommandList_RecursiveHazardous
 ```
+
+为了自动记录指令，UE实现了 `FRHICommandList`，其中有针对 RHI 接口的封装，如果是 by pass 模式，会直接调用对应的 RHI 接口，不是的话就创建对应的 Command。`FRHICommandList` 中的所有接口都是不需要立刻返回结果的，如果需要立刻返回结果，则需要`FRHICommandListImmediate`（继承自 `FRHICommandList`），它也可以记录指令并立即返回结果，是个单例。
 
 `FDynamicRHI` 类是图形库的适配层。DynamicRHI 在各个平台的实现都会继承 `IRHICommandContext` 和 `FDynamicRHI` 相应扩展类，各平台通过各自的 `PlatformCreateDynamicRHI()` 来创建 `FDynamicRHI`。
 
