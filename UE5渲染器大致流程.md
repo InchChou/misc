@@ -170,6 +170,55 @@
     1. 创建 `Froxel::FRenderer`
     2. `RenderOcclusion()`：进行遮挡剔除，HZB。
        1. `GraphBuilder.AddPass([]{BeginOcclusionTests()})`：添加遮挡测试pass
+       2. `bUseHzbOcclusion = RenderHzb()`：添加几个 compute pass，用来实现 Hierarchical Z-Buffer Occlusion Culling
+    3. `CompositionLighting.ProcessAfterOcclusion(GraphBuilder)`：遮挡剔除后的光照计算
+17. `ViewExtension->PreRenderBasePass_RenderThread()`：运行每个 view Extension 的 PreRenderBasePass，进行BasePass前的准备工作
+18. `ComputeLightGridOutput = GatherLightsAndComputeLightGrid()`：在当前视图中为每个视图构建一个灯光列表和网格。
+19. `InitVolumetricCloudsForViews()`：为每个 view 初始化体积云参数
+20. `BeginAsyncDistanceFieldShadowProjections()`：距离场阴影投影计算
+21. `InitLocalFogVolumesForViews(); InitVolumetricRenderTargetForViews()`：体积雾相关初始化
+22. `RenderSkyAtmosphereLookUpTables()`：生成天空大气LUT表
+23. `Scene->AllocateAndCaptureFrameSkyEnvMap()`：实时环境反射
+24. `RenderCustomDepthPass()`：自定义深度计算
+25. `UpdateLumenScene()`：Lumen场景更新，主要包括光照贴图的渲染等
+26. `DispatchRayTracingWorldUpdates()`：异步执行 raytracing 加速结构的创建
+27. `SetupRayTracingLightDataForViews()`：设置用于 raytracing 的光源数据
+28. `WaitForRayTracingScene()`：如果打开了硬件光追阴影，此时 lumen 场景的光照需要光追场景的结果
+
+三是**开始渲染**：
+
+1. `BeginGatheringLumenSurfaceCacheFeedback(); RenderLumenSceneLighting()`：收集 lumen 的 surface cache，渲染 lumen 光照，其中 lumen 的渲染分为直接光照和计算辐射度两个部分。
+2. **`RenderBasePass()`**：延迟渲染中的集合通道，渲染不透明物体的法线，深度，颜色，AO，粗糙度金属度等集合信息，并且写入若干张GBuffer中。
+   1. `GraphBuilder.AddPass(RDG_EVENT_NAME("GBufferClear"), ...)`：添加 GBufferClear Pass
+   2. `RenderBasePassInternal()`：实际的 BasePass 渲染函数。
+      1. `SetupBasePassState()`：设置 BasePass 的Blend 和 DepthStencil 状态
+      2. **`GraphBuilder.AddDispatchPass([]{View.ParallelMeshDrawCommandPasses[EMeshPass::BasePass].Dispatch(DispatchPassBuilder, &PassParameters->InstanceCullingDrawParams)})`**：使用 RDG 并行执行BasePass。
+      3. `RenderEditorPrimitives()`：渲染编辑器相关的图元
+      4. `View.ParallelMeshDrawCommandPasses[EMeshPass::SkyPass].BuildRenderingCommands()` 与 `View.ParallelMeshDrawCommandPasses[EMeshPass::SkyPass].Dispatch()`：并行执行 SkyPass 来渲染大气天空
+   3. `RenderAnisotropyPass()`：并行执行 AnisotropyPass
+3. `ExtractNormalsForNextFrameReprojection()`：提取法线，为下一帧的重投影准备数据
+4. `GraphBuilder.FlushSetupQueue()`：RDG flush Setup队列，执行所有的 Setup 步骤
+5. `DispatchAsyncLumenIndirectLightingWork()`：如果开启了异步 lumen 间接光照，则异步执行 lumen 间接光照
+6. `RenderShadowDepthMaps()`：渲染 ShadowDetphMaps
+7. `AddResolveSceneDepthPass()`：如果开启了msaa，则需要添加解析深度图的pass
+8. `CompositionLighting.ProcessAfterBasePass()`：在 BasePass 后添加一些可能影响光照的pass，如贴花等
+9. `GraphBuilder.FlushSetupQueue()`：再次 flush setup 队列，为渲染光照部分做准备。
+10. 开始光照部分
+11. `RenderDiffuseIndirectAndAmbientOcclusion`：渲染 view 中的间接漫反射和 AO
+    1. `DenoiserOutputs = RenderLumenFinalGather()`：收集 lumen 的探针，计算 Lumen Translucency GI Volume
+    2. `RenderLumenReflections()`：计算 Lumen 反射
+    3. `ApplyDiffuseIndirect()`：计算间接漫反射
+12. `RenderDFAOAsIndirectShadowing()`：DFAO间接阴影
+13. `RenderLights()`：渲染直接光照
+    1. 首先如果启用了 EngineShowFlags.DirectLighting 并且支持体积纹理渲染，则收集所有的光照注入数据，然后将它们注入到各个 view 中
+    2. `UnbatchedLightsPass()`：两段式处理，进行光照渲染，如果启用了头发光照，会加上对每个视图进行处理，渲染头发的光照。
+       1. `RenderRayTracingShadows()`：渲染光追阴影
+       2. `RenderLight()`：光照计算，针对每个光源，进行光照计算
+          1. `InternalRenderLight()`：实际的光照计算。根据光源类型不同进行不同的光照计算
+       3. `RenderLightForHair()`：处理头发的光照渲染
+14. `RenderDiffuseIndirectAndAmbientOcclusion()`：再次调用此函数以进行间接漫反射光照合成
+15. `RenderDeferredReflectionsAndSkyLighting()`：渲染仅对不透明像素起作用的漫射天空照明和反射
+16. `AddSubsurfacePass()`：渲染次表面散射
 
 
 
