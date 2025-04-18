@@ -14,7 +14,8 @@
 >               - `new FDeferredShadingSceneRenderer/FMobileSceneRenderer`
 >             - `ENQUEUE_RENDER_COMMAND(FDrawSceneCommand) ->` 发送 `FDrawSceneCommand` 命令到渲染线程
 >               - 渲染线程中 `RenderViewFamilies_RenderThread() ->`
->                 - `FDeferredShadingSceneRenderer::RenderHitProxies()/Render()` 
+>                 - `FRDGBuilder GraphBuilder()`：针对每个 SceneRenderer，创建一个 GraphBuilder，用于收集各个 pass，生成 RDG
+>                 - **`FDeferredShadingSceneRenderer::RenderHitProxies()/Render()`** 
 
 `RenderViewFamilies_RenderThread()` 中调用了 `SceneRenderer->RenderHitProxies()/Render()`。在最后这里 `Render` 是渲染整个场景的，`RenderHitProxies` 是渲染鼠标点击物体场景的，算是Render的简单版本。
 
@@ -26,8 +27,6 @@
 
 ###  `FDeferredShadingSceneRenderer::Render()`
 
-> [Unreal 渲染管线原理机制源码剖析 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/641367884)
->
 > [UE5【理论】2.延迟渲染管线DeferredShadingPipeline - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/574117143)
 >
 > 在 UE5.3 中，重构了 `Render()` 函数，将其中的第一步流程 `Scene->UpdateAllPrimitiveSceneInfos()` 工作包装成了一个 task，随后又经过了多次修改。主要的有：
@@ -158,7 +157,7 @@
                    2. `FMeshDrawCommand::SubmitDrawEnd()`：如果被分为多个batch，就多次调用此函数提交绘制指令
                 2. `RHICmdList.EndRenderPass(); RHICmdList.FinishRecording()` ：结束此RenderPass
     5. `RenderPrePassEditorPrimitives()`：添加 `EditorPrimitives` pass，绘制编辑器图元，在其中调用了 **`FSimpleElementCollector`** 的 `DrawBatchedElements()` 再调用 **`FBatchedElements::Draw()`** 来生成 draw call。
-11. `RenderVelocities()`：添加VelocityParallel/Velocity pass 来渲染移动物体的 velocity 图。
+11. `RenderVelocities(.., EVelocityPass::Opaque, ..)`：添加VelocityParallel/Velocity pass 来渲染不透明移动物体的 velocity 图。
 12. `RenderNanite()`：等待nanite任务
 13. `AddResolveSceneDepthPass()`：添加解析 Depth 的Pass，这个Pass只会在启用MSAA的情况下执行
 14. `GVRSImageManager.PrepareImageBasedVRS()`：准备VRS相关资源
@@ -219,9 +218,59 @@
 14. `RenderDiffuseIndirectAndAmbientOcclusion()`：再次调用此函数以进行间接漫反射光照合成
 15. `RenderDeferredReflectionsAndSkyLighting()`：渲染仅对不透明像素起作用的漫射天空照明和反射
 16. `AddSubsurfacePass()`：渲染次表面散射
+17. `Substrate::AddSubstrateOpaqueRoughRefractionPasses()`：添加 substrate opaque rough refraction pass
+18. `RenderHairStrandsSceneColorScattering()`：渲染头发的散射
+19. `ComputeVolumetricFog()`：计算体积雾
+20. `RenderVolumetricCloud()`：渲染体积云
+21. `RenderLigthShaftSkyFogAndCloud()`：渲染光束、天空大气、雾
+22. `RenderOpaqueFX()`：渲染不透明特效
+    1. `FXSystem->PostRenderOpaque()`：通知特效系统已经渲染完了
+    2. `GPUSortManager->OnPostRenderOpaque()`：GPU粒子渲染完的回调。
+23. `RenderHairComposition()`：在透明物体之前，头发的合成
+24. `RDG_EVENT_SCOPE(GraphBuilder, "Translucency")`：绘制透明部分
+25. `OIT::AddSortTrianglesPass()`：对三角形进行排序
+26. `RenderTranslucency()`：渲染那些材质标识为透明的物体
+    1. `RenderTranslucencyInner()`：
+       1. `RenderTranslucencyViewInner()`：实际的渲染函数，渲染各个 view 中的透明物体
+27. `RenderHairComposition()`：在透明物体之后，头发的合成
+28. `RenderDistortion()`：Distortion的渲染
+29. `RenderVelocities(.., EVelocityPass::Translucent, ..)`：透明物体的velocity
+30. `RenderLightShaftBloom()`：渲染光束泛光
+31. `RendererModule.RenderOverlayExtensions()`：
+32. `RenderDistanceFieldLighting()`：渲染距离场AO
+33. `RenderLumenMiscVisualizations()`：根据需要渲染 lumen 的一些可视化项目
+34. `CompositeHeterogeneousVolumes()`：
+35. `AddResolveSceneColorPass()`：如果开启 MSAA，则添加解析pass
+36. `ViewFamily.ViewExtensions[ViewExt]->PrePostProcessPass_RenderThread()`：
+37. `AddPostProcessingPasses()`：执行默认的后处理
+    1. `AddTemporalSuperResolutionPasses()/AddGen4MainTemporalAAPasses()`：TSR或TAA
+    2. `AddLocalExposureBlurredLogLuminancePass()`：局部曝光
+       1. `AddGaussianBlurPass()`：添加高斯模糊 Pass
+    3. `AddHistogramEyeAdaptationPass()`：添加眼部适应自动曝光 Pass
+    4. `AddGaussianBloomPasses()`：高斯泛光
+    5. `AddLensFlaresPass()`：镜头光晕
+    6. `AddCombineLUTPass()`：合并 LUT
+    7. `AddTonemapPass()`：Tonemap
+    8. `AddAfterPass()`：
+    9. 根据一些配置，添加用于 debug 的 Pass
+38. `GEngine->GetPostRenderDelegateEx().Broadcast(GraphBuilder)`：执行注册的后处理代理函数
+39. `GetSceneExtensionsRenderers().PostRender()`：执行扩展渲染器的后渲染函数
+40. `OnRenderFinish(GraphBuilder, ViewFamilyTexture)`：结束 viewFamily 的渲染
+41. `GraphBuilder.AddDispatchHint()`：标记最后一个 Pass 的 `bDispatchAfterExecute` 标志
+42. `GraphBuilder.FlushSetupQueue()`：flush setup queue，异步执行之前添加的 setup 步骤
+43. `QueueSceneTextureExtractions()`：将场景纹理提取到 global extraction 实例中
+44. 进行一些参数的清理工作
+
+此时 `Render()` 函数就执行完毕了，该有的 Pass 都放入了 GraphBuilder 中。
+
+之后执行 **`GraphBuilder.Execute()`** 来执行 RDG，相关内容后续再记录。
 
 
 
 > [UE5中的Render函数到底做了什么？ - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/642093164)
 >
 > [UE5渲染前数据准备 - 知乎 (zhihu.com)](https://www.zhihu.com/column/c_1623021177307365376)
+>
+> [Unreal 渲染管线原理机制源码剖析 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/641367884)
+>
+> [UE4 主渲染函数 - Papalqi](https://papalqi.cn/deferredshaderingrender/)
