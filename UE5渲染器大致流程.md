@@ -274,3 +274,56 @@
 > [Unreal 渲染管线原理机制源码剖析 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/641367884)
 >
 > [UE4 主渲染函数 - Papalqi](https://papalqi.cn/deferredshaderingrender/)
+
+
+
+## 一些改变
+
+### 从FPrimitiveSceneProx到FMeshBatch
+
+与 [从FPrimitiveSceneProx到FMeshBatch](https://www.cnblogs.com/timlly/p/14588598.html#322-%E4%BB%8Efprimitivesceneproxy%E5%88%B0fmeshbatch) 相比，UE5 改动挺大，没有了 `FDeferredShadingSceneRenderer::InitViews()` 函数，并且也没有了 `FSceneRender::ComputeViewVisibility()` 函数，取而代之的是 `FDeferredShadingSceneRenderer::BeginInitViews()`，以及将可见性判断做成并行任务的 `TaskDatas.VisibilityTaskData->ProcessRenderThreadTasks()`。
+
+在 `FVisibilityTaskData` 中，有一个数据结构 `FDynamicMeshElements DynamicMeshElements`，用于收集 DynamicPrimitives，其中又有一个 `FDynamicMeshElementContexContainer ContextContainer`，这个 Container 中又有一个数组 `FDynamicMeshElementContextArray Contexts`，数组中是 `DynamicMeshElementContext` 类型，每个 Context 中又有一个 `FMeshElementCollector MeshCollector` 用于收集 `FPrimitiveSceneProxy`。
+
+```mermaid
+classDiagram
+	FVisibilityTaskData --> FDynamicMeshElements
+
+	class FVisibilityTaskData{
+		-FDynamicMeshElements DynamicMeshElements
+		+LaunchVisibilityTasks()
+		+ProcessRenderThreadTasks()
+		+FinishGatherDynamicMeshElements()
+	}
+
+	class FDynamicMeshElements{
+		+FDynamicMeshElementContextContainer ContextContainer
+		+TArray<FDynamicPrimitive, SceneRenderingAllocator> DynamicPrimitives
+	}
+	
+	FDynamicMeshElements --> FDynamicMeshElementContextContainer
+	class FDynamicMeshElementContextContainer{
+		-FDynamicMeshElementContextArray Contexts
+		+Init()
+		+MergeContexts()
+		+LaunchRenderThreadTask()
+		+LaunchAsyncTask()
+	}
+	
+	FDynamicMeshElementContextContainer --> FDynamicMeshElementContext : N
+	class FDynamicMeshElementContext{
+		-FMeshElementCollector MeshCollector
+	}
+	
+	FDynamicMeshElementContext --> FMeshElementCollector
+```
+
+收集的大概流程是：
+
+1.  在 `FSceneRenderer::OnRenderBegin()` 中调用 `LaunchVisibilityTasks::LaunchVisibilityTasks()` 
+2. 或者在 `FSceneRenderer::BeginInitViews()` 中调用 `LaunchVisibilityTasks::ProcessRenderThreadTasks()`
+3. 步骤 1 和 2 都会调用到 `FVisibilityTaskData::GatherDynamicMeshElements()` 中，在此函数中，有 `Tasks.DynamicMeshElements.AddPrerequisites(DynamicMeshElements.ContextContainer.LaunchAsyncTask(Queue, Index, TaskConfig.TaskPriority))`，它的含义是给 `DynamicMeshElements` 任务添加依赖，此依赖是由 `DynamicMeshElements.ContextContainer.LaunchAsyncTask(Queue, Index, TaskConfig.TaskPriority)` 生成的 Task。
+4. 而 `FDynamicMeshElementContextContainer::LaunchAsyncTask()` 又会调用 `FDynamicMeshElementContext::LaunchAsyncTask()`
+   1. `FDynamicMeshElementContext::LaunchAsyncTask()` 又会启动一个任务任务中针对每个 PrimitiveIndex，调用了 `GatherDynamicMeshElementsForPrimitive()`，用来收集 Primitive
+      1. 在 `FDynamicMeshElementContext::GatherDynamicMeshElementsForPrimitive()` 中，又调用 `Primitive->Proxy->GetDynamicMeshElements(FirstViewFamily.AllViews, *Group.Family, MaskedViewMask, MeshCollector)` 来收集 PrimitiveProxy
+
