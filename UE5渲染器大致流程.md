@@ -336,3 +336,10 @@ classDiagram
          2. 调用 `Primitive->Proxy->GetDynamicMeshElements(FirstViewFamily.AllViews, *Group.Family, MaskedViewMask, MeshCollector)` 来获取动态网格数据。这里的 Proxy 是 `FPrimitiveSceneProxy` 的子类，如 `FLineBatcherSceneProxy`、`FStaticMeshSceneProxy`、`FSkeletalMeshSceneProxy` 等，他们都实现了 `GetDynamicMeshElements()` 接口
          3. 添加一个 `FDynamicPrimitive` 到 Context 的 `DynamicPrimitives` 数组中，并将其信息设置为当前 Primitive 的信息
 
+
+
+以 `FSkeletalMeshSceneProxy::GetDynamicMeshElements()` 为例，它调用到了 `FSkeletalMeshSceneProxy::GetMeshElementsConditionallySelectable()` 中进行实际的工作
+
+1. 首先从 `SkeletalMeshRenderData` 中获取第一个 LOD 索引并校验，如果有效，则进行下一步操作
+2. 根据有效的 LOD 索引，取得对应的 `FLODSectionElements& LODSection`，根据此 Section 和其他信息，创建一个将此 Section 和 LODRenderData 关联起来的迭代器
+3. 使用迭代器遍历 Section 中的条目，同时取出条目相关的 `FSectionElementInfo`，
