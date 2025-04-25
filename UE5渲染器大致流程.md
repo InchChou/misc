@@ -332,8 +332,8 @@ classDiagram
 4. 而 `FDynamicMeshElementContextContainer::LaunchAsyncTask()` 又会调用 `FDynamicMeshElementContext::LaunchAsyncTask()`，这里 Context 可能会有多个，所以生成的被依赖的 Task 会有多个
    1. `FDynamicMeshElementContext::LaunchAsyncTask()` 会调用 `Pipe.Launch([]{})` 启动一个任务，任务中会将 PrimitiveIndexQueue 中的 PrimitiveIndex Pop 出来，对于这些 Index 调用 `GatherDynamicMeshElementsForPrimitive()`，用来收集 Primitive
       1. 在 **`FDynamicMeshElementContext::GatherDynamicMeshElementsForPrimitive()`** 中
-         1. 调用 `MeshCollector.SetPrimitive()` 将FPrimitiveSceneProxy的信息设置到收集器中
-         2. 调用 `Primitive->Proxy->GetDynamicMeshElements(FirstViewFamily.AllViews, *Group.Family, MaskedViewMask, MeshCollector)` 来获取动态网格数据。这里的 Proxy 是 `FPrimitiveSceneProxy` 的子类，如 `FLineBatcherSceneProxy`、`FStaticMeshSceneProxy`、`FSkeletalMeshSceneProxy` 等，他们都实现了 `GetDynamicMeshElements()` 接口
+         1. 调用 `MeshCollector.SetPrimitive()` 将 `FPrimitiveSceneProxy` 的信息设置到收集器中
+         2. 调用 **`Primitive->Proxy->GetDynamicMeshElements(FirstViewFamily.AllViews, *Group.Family, MaskedViewMask, MeshCollector)`** 来获取动态网格数据。这里的 Proxy 是 `FPrimitiveSceneProxy` 的子类，如 `FLineBatcherSceneProxy`、`FStaticMeshSceneProxy`、`FSkeletalMeshSceneProxy` 等，他们都实现了 `GetDynamicMeshElements()` 接口
          3. 添加一个 `FDynamicPrimitive` 到 Context 的 `DynamicPrimitives` 数组中，并将其信息设置为当前 Primitive 的信息
 
 
@@ -341,5 +341,26 @@ classDiagram
 以 `FSkeletalMeshSceneProxy::GetDynamicMeshElements()` 为例，它调用到了 `FSkeletalMeshSceneProxy::GetMeshElementsConditionallySelectable()` 中进行实际的工作
 
 1. 首先从 `SkeletalMeshRenderData` 中获取第一个 LOD 索引并校验，如果有效，则进行下一步操作
-2. 根据有效的 LOD 索引，取得对应的 `FLODSectionElements& LODSection`，根据此 Section 和其他信息，创建一个将此 Section 和 LODRenderData 关联起来的迭代器
-3. 使用迭代器遍历 Section 中的条目，同时取出条目相关的 `FSectionElementInfo`，
+2. 根据有效的 LOD 索引，取得对应的 `FLODSectionElements& LODSection`，根据此 Section 和其他信息，创建一个将此 Section 和 LODRenderData 关联起来的迭代器，它代表着遍历了子模型
+3. 使用迭代器遍历 Section 中的条目，同时取出条目相关的 `FSectionElementInfo`，根据此 Info 判断此 mesh 是否需要绘制，需要的话就调用 `GetDynamicElementsSection()` 将指定 LODIndex 和 SectionIndex 加入到Collector中
+   1. `Mesh = Collector.AllocateMesh()` 分配一个 `FMeshBatch`，然后 `CreateBaseMeshBatch()` 设置 MeshBatch 中首个 Element 的属性，指向 LODData 的对应属性
+   2. 继续设置 `FMeshBatch` 的各种属性，如 ReverseCulling、CastShadow、VisualizeLODIndex 等。
+   3. **`Collector.AddMesh(ViewIndex, Mesh)`** 将 `FMeshBatch` 与对应的 ViewIndex 添加进 Collector 中。
+
+
+
+在 `FDeferredShadingSceneRenderer::Render()` 中，在设置完 `OnRenderBegin()` 的任务以及设置一些基本 Pass 之后，会调用 `InitViewTaskDatas.VisibilityTaskData->FinishGatherDynamicMeshElements()` 来完成 MeshElements 的收集。
+
+1. `Tasks.DynamicMeshElements.Wait()` 等待收集任务的完成，其中隐式的等待了它所依赖的任务的完成
+2. `Tasks.MeshPassSetup = UE::Tasks::Launch([]{SetupMeshPasses()})`，启动一个 `MeshPassSetup` 任务，任务中调用了 `FVisibilityTaskData::SetupMeshPasses()`。所有这些任务，在 `FDeferredShadingSceneRenderer::EndInitViews()` 中都会等待完成。
+   1. 首先调用 `DynamicMeshElements.ContextContainer.MergeContexts()` 来合并 Context
+   2. `ComputeDynamicMeshRelevance()`：计算当前的 MeshBatch会被哪些MeshPass引用, 从而加到view的对应MeshPass的计数（`FViewInfo::NumVisibleDynamicMeshElements`）中
+   3. 在最后，会针对每一个 view 调用 **`SceneRenderer.SetupMeshPass()`**
+      1. `for (int32 PassIndex = 0; PassIndex < EMeshPass::Num; PassIndex++)`：遍历EMeshPass定义的所有Pass。
+      2. `FMeshPassProcessor* MeshPassProcessor = FPassProcessorManager::CreateMeshPassProcessor()`：创建 `FMeshPassProcessor`
+      3. `FParallelMeshDrawCommandPass& Pass = View.ParallelMeshDrawCommandPasses[PassIndex]`：获取指定 Pass 的 `FParallelMeshDrawCommandPass` 对象
+      4. `Pass.DispatchPassSetup(Scene, View, FInstanceCullingContext(..., InstanceCullingMode, CullingFlags), ...)`：创建 `FInstanceCullingContext` cull 上下文，并行地处理可见 Pass 的处理任务，创建此Pass的所有绘制命令。
+
+
+
+由此可见，UE事先罗列了所有可能需要绘制的Pass，在 `FSceneRenderer::SetupMeshPass` 阶段对需要用到的Pass并行化地生成DrawCommand。
