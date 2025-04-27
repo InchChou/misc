@@ -325,7 +325,7 @@ classDiagram
       1. 创建 `DynamicMeshElements` 中的数据，如 `CommandPipe`（给它设置 CommandFunction）
       2. 初始化 `ContextContainer`，调用 `FDynamicMeshElementContextContainer::Init()` 中创建了 `GNumDynamicMeshElementTasks` 数目个 **`FDynamicMeshElementContext`**，在它们的构造函数中，调用流程如下：
          1. 将 Scene 中具有相同 viewFamily 的 view 放在同一组，不同的放在不同组，调用 `MeshCollector.Start()` 给 Collector 设置 VertexBuffer 和 IndexBuffer。
-         2. 针对 ViewMeshArraysPerView 和对应的 view，调用 **`MeshCollector.AddViewMeshArrays()`** 来将 view 中的 Mesh 信息添加进 Collector 中
+         2. 针对 ViewMeshArraysPerView 和对应的 view，调用 `MeshCollector.AddViewMeshArrays()` 来将 view 中的 Mesh 信息添加进 Collector 中（？？？此处不理解）
       3. 设置 `FVisibilityTaskData::Tasks` 中各个 FTask 的依赖关系，依赖关系如图所示。
 2. 或者在 `FSceneRenderer::BeginInitViews()` 中调用 `LaunchVisibilityTasks::ProcessRenderThreadTasks()`
 3. 步骤 1 和 2 都会调用到 `FVisibilityTaskData::GatherDynamicMeshElements()` 中，在此函数中，针对每一个 `FDynamicMeshElementContext` 都调用 `Tasks.DynamicMeshElements.AddPrerequisites(DynamicMeshElements.ContextContainer.LaunchAsyncTask(Queue, Index, TaskConfig.TaskPriority))`，它的含义是给 `DynamicMeshElements` 任务**添加依赖**，此依赖是由 `DynamicMeshElements.ContextContainer.LaunchAsyncTask(Queue, Index, TaskConfig.TaskPriority)` 生成的 Task。
@@ -364,3 +364,23 @@ classDiagram
 
 
 由此可见，UE事先罗列了所有可能需要绘制的Pass，在 `FSceneRenderer::SetupMeshPass` 阶段对需要用到的Pass并行化地生成DrawCommand。
+
+在 `FParallelMeshDrawCommandPass::DispatchPassSetup()` 中：
+
+1. 设置 `TaskContext` 的数据，收集生成 MeshCommand 所需的数据。
+2. 设置基于view的透明排序键
+3. 根据最大绘制数量(MaxNumDraws)在渲染线程预分配资源
+4. `TaskEventRef = TGraphTask<FMeshDrawCommandPassSetupTask>::CreateTask().ConstructAndDispatchWhenReady(TaskContext)`：如果是并行方式, 便**创建并行任务实例**并加入 TaskGraph 系统执行
+5. `TaskContext.InstanceCullingContext.BeginAsyncSetup(FinalizeInstanceCullingSetup)`：设置 InstanceCulling 的依赖设置。
+
+
+
+以上代码涉及了几个关键的概念：`FMeshPassProcessor`（`MeshPassProcessor.h`），`FMeshDrawCommandPassSetupTaskContext`（`MeshDrawCommands.h`），`FMeshDrawCommandPassSetupTask`，`FMeshDrawCommandInitResourcesTask`（`MeshDrawCommands.cpp`）。
+
+同时在 `MeshDrawCommands.cpp` 中有一个比较重要的函数 `GenerateDynamicMeshDrawCommands()`，转换指定 `EMeshPass` 中的每个 `FMeshBatch` 到一组 `FMeshDrawCommand`，`FMeshDrawCommandPassSetupTask` 要用到。这个函数中比较重要的一句是 **`PassMeshProcessor->AddMeshBatch()`**，**将 FMeshBatch 加入到 PassMeshProcessor 进行处理**.
+
+`class FMeshDrawCommandPassSetupTask` 用于并行设置网格绘制指令的任务。包含动态网格绘制命令的生成, 排序，合并等。它其中最重要的函数是 `AnyThreadTask()`，在 `DispatchPassSetup()` 生成 task 后，工作线程执行此 task 时会直接调用这个函数。
+
+由此可见 **`FMeshDrawCommandPassSetupTask`** 担当了在网格渲染管线中担当了相当重要的角色， 包含动态网格绘和静态制绘制命令的生成、排序、合并等。其中排序阶段的键值由 `FMeshDrawCommandSortKey` 决定，计算 Key 后，调用 `Context.MeshDrawCommands.Sort()` 排序。
+
+`FMeshPassProcessor `充当了将 `FMeshBatch` 转换成 `FMeshDrawCommands` 的角色
