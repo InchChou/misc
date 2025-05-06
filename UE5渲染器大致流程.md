@@ -109,7 +109,7 @@
     7. `TaskDatas.VisibilityTaskData->ProcessRenderThreadTasks()`：等待 Visibility 任务完成
        1. **`GatherDynamicMeshElements(*DynamicMeshElements.PrimitiveViewMasks)`**：收集当前场景所有的FPrimitiveSceneProxy
 18. 光追拉花、光追shader、光追光源相关
-19. `InitViewTaskDatas.VisibilityTaskData->FinishGatherDynamicMeshElements()`：完成动态网格可见性任务，调用MeshPassSetup任务
+19. **`InitViewTaskDatas.VisibilityTaskData->FinishGatherDynamicMeshElements()`**：完成动态网格可见性任务，调用MeshPassSetup任务
     1. `Tasks.MeshPassSetup = UE::Tasks::Launch([]{SetupMeshPasses()})`：设置MeshPassSetup任务。
        1. **`FSceneRenderer::SetupMeshPass()`**：设置MeshPass
           1. 遍历`EMeshPass`定义的所有Pass。
@@ -139,28 +139,28 @@
 8. **`RenderPrepassAndVelocity()`**：一个lambda函数，包装了 **RenderPrePass** 等pass
    1. `AddClearDepthStencilPass()`：添加 ClearDepthStencil Pass
    2. **`RenderPrePass(GraphBuilder, InViews, SceneTextures.Depth.Target, InstanceCullingManager, &FirstStageDepthBuffer)`**：添加 RenderPrePass，此pass是为了以低成本获得场景的深度图，见[UE5渲染管线--PrePass通道 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/616968106)
-   3. `SetupDepthPassState(DrawRenderState)`：设置 `DrawRenderState` 的 Blend、DepthStencil 状态
-   4. `View.BeginRenderView()`：
-   5. `View.ParallelMeshDrawCommandPasses[DepthMeshPass].BuildRenderingCommands()`：在每个 View 的 `ParallelMeshDrawCommandPasses` 中提取出对应于DepthMeshPass的CommandPass，收集 cull 结果，合并batch，创建出 Rendering 指令
-   6. `GraphBuilder.AddDispatchPass()`：添加 DepthPassParallel pass，在其中调用对应的CommandPass的 **`FParallelMeshDrawCommandPass::Dispatch()`** 函数
-      1. `Dispatch([]{FSceneRenderer::SetStereoViewport()})`：以 `SetStereoViewport()` 为 lambda 函数，进行 Dispatch
-         1. `OverrideArgs = GetMeshDrawCommandOverrideArgs(*InstanceCullingDrawParams)`：获取绘制所需的 `FMeshDrawCommandOverrideArgs` 命令参数
-         2. `RHICmdList = DispatchPassBuilder.CreateCommandList()`：创建 RHICmdList 并 `BeginRenderPass()`
-         3. `SetupCommandListFunction()`：运行传入的 lambda 函数，即 `SetStereoViewport()`，设置viewport
-         4. `TGraphTask<FDrawVisibleMeshCommandsAnyThreadTask>::CreateTask(&Prereqs).ConstructAndDispatchWhenReady()`：创建 `FDrawVisibleMeshCommandsAnyThreadTask` 绘制任务并运行，主要是为了并行绘制
-            1. `FDrawVisibleMeshCommandsAnyThreadTask::DoTask()`：运行并行绘制任务
-               1. `InstanceCullingContext.SubmitDrawCommands()`：根据cull的结果，提交绘制命令
-                  1. `FMeshDrawCommand::SubmitDraw()`：提交绘制指令到 RHI CommandList 中
+      1. `SetupDepthPassState(DrawRenderState)`：设置 `DrawRenderState` 的 Blend、DepthStencil 状态
+      2. `View.BeginRenderView()`：针对每个 view 都渲染 DepthPass，先标记 BeginRenderView
+      3. `View.ParallelMeshDrawCommandPasses[DepthMeshPass].BuildRenderingCommands()`：在每个 View 的 `ParallelMeshDrawCommandPasses` 中提取出对应于DepthMeshPass的CommandPass，收集 cull 结果，合并batch，创建出 Rendering 指令
+      4. `GraphBuilder.AddDispatchPass()`：添加 DepthPassParallel pass，在其中调用对应的DrawCommandPass的 **`FParallelMeshDrawCommandPass::Dispatch()`** 函数。通过 `AddDispatchPass` 会将构建的 Pass 传递给 `FRDGBuilder` 的 `Passes` 注册表（封装了数组）和 `DispatchPasses` 数组，供 RDG 调度
+         1. `Dispatch([]{FSceneRenderer::SetStereoViewport()})`：以 `SetStereoViewport()` 为 lambda 函数，进行 Dispatch
+            1. `OverrideArgs = GetMeshDrawCommandOverrideArgs(*InstanceCullingDrawParams)`：获取绘制所需的 `FMeshDrawCommandOverrideArgs` 命令参数
+            2. `RHICmdList = DispatchPassBuilder.CreateCommandList()`：创建 RHICmdList 并 `BeginRenderPass()`
+            3. `SetupCommandListFunction()`：运行传入的 lambda 函数，即 `SetStereoViewport()`，设置viewport
+            4. `TGraphTask<FDrawVisibleMeshCommandsAnyThreadTask>::CreateTask(&Prereqs).ConstructAndDispatchWhenReady()`：创建 `FDrawVisibleMeshCommandsAnyThreadTask` 绘制任务并运行，主要是为了并行绘制
+               1. `FDrawVisibleMeshCommandsAnyThreadTask::DoTask()`：运行并行绘制任务
+                  1. `InstanceCullingContext.SubmitDrawCommands()`：根据cull的结果，提交绘制命令
+                  2. `FMeshDrawCommand::SubmitDraw()`：提交绘制指令到 RHI CommandList 中
                      1. `SubmitDrawBegin()`：设置RenderTarget、State Cache等
                      2. `SubmitDrawEnd()`：提交绘制指令
                         1. **`RHICmdList.DrawIndexedPrimitive()`**
-                  2. `FMeshDrawCommand::SubmitDrawEnd()`：如果被分为多个batch，就多次调用此函数提交绘制指令
-               2. `RHICmdList.EndRenderPass(); RHICmdList.FinishRecording()` ：结束此RenderPass
-   7. `RenderPrePassEditorPrimitives()`：添加 `EditorPrimitives` pass，绘制编辑器图元，在其中调用了 **`FSimpleElementCollector`** 的 `DrawBatchedElements()` 再调用 **`FBatchedElements::Draw()`** 来生成 draw call。
-   8. `RenderVelocities(.., EVelocityPass::Opaque, ..)`：添加VelocityParallel/Velocity pass 来渲染不透明移动物体的 velocity 图。
-   9. `RenderNanite()`：等待nanite任务
-   10. `AddResolveSceneDepthPass()`：添加解析 Depth 的Pass，这个Pass只会在启用MSAA的情况下执行
-9. 执行 CustomRenderPasses。
+                  3. `FMeshDrawCommand::SubmitDrawEnd()`：如果被分为多个batch，就多次调用此函数提交绘制指令
+                  4. `RHICmdList.EndRenderPass(); RHICmdList.FinishRecording()` ：结束此RenderPass
+      5. `RenderPrePassEditorPrimitives()`：添加 `EditorPrimitives` pass，绘制编辑器图元，在其中调用了 **`FSimpleElementCollector`** 的 `DrawBatchedElements()` 再调用 **`FBatchedElements::Draw()`** 来生成 draw call。
+   3. `RenderVelocities(.., EVelocityPass::Opaque, ..)`：添加VelocityParallel/Velocity pass 来渲染不透明移动物体的 velocity 图。
+   4. `RenderNanite()`：等待nanite任务
+   5. `AddResolveSceneDepthPass()`：添加解析 Depth 的Pass，这个Pass只会在启用MSAA的情况下执行
+9. 执行 CustomRenderPasses，其中可能执行 `RenderPrepassAndVelocity()`
 10. `GVRSImageManager.PrepareImageBasedVRS()`：准备VRS相关资源
 11. `FinishInitDynamicShadows()`：设置动态阴影数据
     1. `FSceneRenderer::FinishInitDynamicShadows()`：
@@ -360,7 +360,7 @@ classDiagram
       1. `for (int32 PassIndex = 0; PassIndex < EMeshPass::Num; PassIndex++)`：遍历EMeshPass定义的所有Pass。
       2. `FMeshPassProcessor* MeshPassProcessor = FPassProcessorManager::CreateMeshPassProcessor()`：创建 `FMeshPassProcessor`
       3. `FParallelMeshDrawCommandPass& Pass = View.ParallelMeshDrawCommandPasses[PassIndex]`：获取指定 Pass 的 `FParallelMeshDrawCommandPass` 对象
-      4. `Pass.DispatchPassSetup(Scene, View, FInstanceCullingContext(..., InstanceCullingMode, CullingFlags), ...)`：创建 `FInstanceCullingContext` cull 上下文，并行地处理可见 Pass 的处理任务，创建此Pass的所有绘制命令。
+      4. **`Pass.DispatchPassSetup(Scene, View, FInstanceCullingContext(..., InstanceCullingMode, CullingFlags), ...)`**：创建 `FInstanceCullingContext` cull 上下文，将 MeshPassProcessor 等设置给 `FParallelMeshDrawCommandPass` 的 `TaskContext`，并行地处理可见 Pass 的处理任务，创建此Pass的所有绘制命令。
 
 
 
@@ -404,3 +404,34 @@ classDiagram
 
 
 `FMeshPassProcessor::BuildMeshDrawCommands `在最后阶段会调用 `FMeshPassDrawListContext::FinalizeCommand`。`FMeshPassDrawListContext `提供了两个基本接口，是个抽象类，派生类有 `FDynamicPassMeshDrawListContext` 和 `FCachedPassMeshDrawListContext`，分别代表了动态网格绘制指令和缓存网格绘制指令的上下文。
+
+
+
+### 从 `FMeshDrawCommand` 到 `RHICommandList`
+
+`FMeshBatch` 转换成 `FMeshDrawCommand` 后，每个 Pass 都对应了一个 `FMeshPassProcessor`（它的子类实例），每个 `FMeshPassProcessor` 保存了该 Pass 需要绘制的所有 `FMeshDrawCommand`，以便渲染器在合适的时间触发并渲染。
+
+以上一节的“二是预渲染部分”的 8.2 `RenderPrePass` 为例（即深度 Pass），说明转换流程。
+
+从 8.2.3 和 8.2.4 中可以看到分别直接调用了 `View.ParallelMeshDrawCommandPasses[DepthMeshPass].BuildRenderingCommands()` 和通过 RDG 在 `GraphBuilder.AddDispatchPass([]{})`  中调用了  `View.ParallelMeshDrawCommandPasses[DepthMeshPass].Dispatch()`
+
+这里涉及到一个比较重要的类 **`FParallelMeshDrawCommandPass`**，它通过数组保存在每个 View 中，在上一节的 **`SceneRenderer.SetupMeshPass()`** 也提到了。通过类的定义和注释可以知道，它是为了进行并行网格绘制命令处理和渲染。本质上是封装了两个并行 task，一个是 mesh command setup task，另一个是 drawing task，后者依赖前者。
+
+在收集 DynamicMeshElements 的过程中，就调用了 `DispatchPassSetup()` 进行 Task 上下文的设置，并生成了 MeshDrawCommand。然后调用 `BuildRenderingCommands()` 来进行 post-instance 剔除作业，**创建 render command**、创建 instance ID 列表和 顶点数据。
+
+最后通过 RDG 调用 `Dispatch()` 来执行渲染命令，8.2.4 写出了此 pass 大致的 RHICommandList 执行流程。dispatch 中会根据工作线程的数量，创建不大于此数目的 task，每个 task 分块读取 `TaskContext.MeshDrawCommands` 中的渲染命令，同时**给每个 task 创建一个 `FRHICommandList`**。最后是通过 `FDrawVisibleMeshCommandsAnyThreadTask::DoTask()  ->  InstanceCullingContext.SubmitDrawCommands()` 调用到 `FMeshDrawCommand::SubmitDraw()` 和 `FMeshDrawCommand::SubmitDrawEnd()`，或者是 `SubmitMeshDrawCommandsRange()`
+
+调用流程为 `FParallelMeshDrawCommandPass::DispatchPassSetup()  ->  BuildRenderingCommands()  ->  Dispatch()`   -->   `FDrawVisibleMeshCommandsAnyThreadTask::DoTask()  ->  FInstanceCullingContext::SubmitDrawCommands()  ->   FMeshDrawCommand::SubmitDraw()`
+
+> 这里 UE5.5 的代码与博客中UE4的不一样，首先没有使用 `SubmitMeshDrawCommandsRange()` 而是用的 `SubmitDrawCommands()`，SubmitMeshDrawCommandsRange 只使用在了没有重构的个别地方，如非并行的 `FParallelMeshDrawCommandPass::Draw()` 中和性能不敏感的 `DrawDynamicMeshPass()` 中。其次重构了 `FMeshDrawCommand::SubmitDraw()`，将其分成了 `SubmitDrawBegin()` 和 `SubmitDrawEnd()` 两部分，显得更加简洁清晰。
+
+在 SubmitDraw 中，向 `FRHICommandList` 提交绘制指令，以及设置状态指令等等。如 `FRHICommandList::DrawIndexedPrimitive()`、`FRHICommandList::DrawIndexedPrimitiveIndirect()`、`FRHICommandList::DrawIndexed()`、`FRHICommandList::DrawIndexedIndirect()`。
+
+### 从 RHICommandList 到 GPU
+
+以 `FRHICommandList::DrawIndexedPrimitive` 为例，在 `RHICommandList.h` 中，有两种执行模式：
+
+1. ByPass 模式，绕开 RHI 线程直接执行
+2. 在 RHI 线程以指令形式执行：`ALLOC_COMMAND(FRHICommandDrawIndexedPrimitive)(...)`。使用宏来分配一个 RHICommand。
+
+在源码中继续查看这几个宏，可以知道它是通过预先定义的宏 `FRHICOMMAND_MACRO`、`INTERNAL_DECORATOR` 和 `ALLOC_COMMAND` 将RHICommandList中间层绘制指令，经过`IRHICommandContext`转换到对应图形API，以便后续提交绘制指令到GPU。
