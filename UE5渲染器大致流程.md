@@ -435,3 +435,9 @@ classDiagram
 2. 在 RHI 线程以指令形式执行：`ALLOC_COMMAND(FRHICommandDrawIndexedPrimitive)(...)`。使用宏来分配一个 RHICommand。
 
 在源码中继续查看这几个宏，可以知道它是通过预先定义的宏 `FRHICOMMAND_MACRO`、`INTERNAL_DECORATOR` 和 `ALLOC_COMMAND` 将RHICommandList中间层绘制指令，经过`IRHICommandContext`转换到对应图形API，以便后续提交绘制指令到GPU。
+
+### 渲染小结
+
+见 [剖析虚幻渲染体系（03）- 渲染机制 - 0向往0 - 博客园 (cnblogs.com)](https://www.cnblogs.com/timlly/p/14588598.html#34-渲染机制总结)
+
+- 其中 “并行绘制” 这一部分，UE5 相对于 UE4 有变动，没有了 `FSceneRenderer::WaitForTasksClearSnapshotsAndDeleteSceneRenderer` 等待并行绘制，而是在 `FSceneRenderer::RenderThreadEnd()` 中调用 `WaitForTasksAndDeleteSceneRenderers()` 来等待，最终通过 `WaitForTasksAndDeleteSceneRenderers() -> DeleteSceneRenderers()` 调用 `SceneRenderer->DispatchedShadowDepthPasses[PassIndex]->WaitForTasksAndEmpty()` 和 `View->WaitForTasks()` 来实际等待 task。
