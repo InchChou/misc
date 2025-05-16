@@ -8,7 +8,7 @@
 >   - `UUnrealEdEngine/UGameEngine::Tick() ->`
 >     - `UEditorEngine::UpdateSingleViewportClient()/UGameEngine::RedrawViewports() ->`
 >       - `FViewport::Draw() ->`
->         - `UGameViewportClient/FEditorViewportClient::Draw() ->`
+>         - `FEditorViewportClient/UGameViewportClient::Draw() ->`
 >           - `GetRendererModule().BeginRenderingViewFamily()->`  `GetRendererModule()` 返回一个 `FRendererModule` 的实例
 >             - `FSceneRenderer::CreateSceneRenderers() ->`
 >               - `new FDeferredShadingSceneRenderer/FMobileSceneRenderer`
@@ -16,6 +16,10 @@
 >               - 渲染线程中 `RenderViewFamilies_RenderThread() ->`
 >                 - `FRDGBuilder GraphBuilder()`：针对每个 SceneRenderer，创建一个 GraphBuilder，用于收集各个 pass，生成 RDG
 >                 - **`FDeferredShadingSceneRenderer::RenderHitProxies()/Render()`** 
+>                 - `GraphBuilder.Execute()`：执行 RDG
+>                 - `FSceneRenderer::RenderThreadEnd(RHICmdList, SceneRenderers)`：标志渲染器在 RenderThread 中运行结束，进行结束的清理工作
+>                   - 根据 `GSceneRenderCleanUpMode` 标志位分为两条通路：一条立即等待和清理；另一条延迟清理。下面以立即模式为例。
+>                   - `WaitForTasksAndDeleteSceneRenderers()`：等待渲染任务完成，并删除SceneRenderer实例。
 
 `RenderViewFamilies_RenderThread()` 中调用了 `SceneRenderer->RenderHitProxies()/Render()`。在最后这里 `Render` 是渲染整个场景的，`RenderHitProxies` 是渲染鼠标点击物体场景的，算是Render的简单版本。
 
