@@ -9,3 +9,6 @@
 `FScene::Update` 过程：
 
 1. 首先对 `RemovedLocalPrimitiveSceneInfos` 和 `AddedLocalPrimitiveSceneInfos` 进行排序，分别对应着之前存在于场景中并将被移除的图元，和不存在场景中并将被添加的图元。
+2. `CSV_SCOPED_TIMING_STAT_EXCLUSIVE(RemovePrimitiveSceneInfos)`：在删除操作中，将要删除的 proxy 移到 `PrimitiveSceneProxies` 数组（在数组中，proxy 按 type 连续存储）最末端，配合 `PrimitiveSceneProxies` 和 `TypeOffsetTable`, 可以减少删除元素的移动或交换次数。然后移除 `DistanceFieldSceneData` 和 Lumen 数据中的 Primitive 及相关信息。
+3. `CSV_SCOPED_TIMING_STAT_EXCLUSIVE(AddPrimitiveSceneInfos)`：处理图元增加时，将 Primitive 相关信息的那些数组增加空间。然后增加新的 Primitive 信息，将这些信息赋值为 `AddedLocalPrimitiveSceneInfos` 中的信息。更新 `TypeOffsetTable`。同样的，根据 TypeOffsetTable 通过交换操作将相同 Type 的 Primitive 放在一起。然后添加 `DistanceFieldSceneData` 和 Lumen 数据中的 Primitive 及相关信息。
+4. `CSV_SCOPED_TIMING_STAT_EXCLUSIVE(UpdatePrimitiveTransform)`：更新图元变换矩阵
