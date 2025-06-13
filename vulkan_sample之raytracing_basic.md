@@ -274,7 +274,7 @@ vkCmdTraceRaysKHR(
 
 其他概念都是 vulkan 光追引入的，但是在 raytracingbasic 中未使用到，所以只是简单描述一下。
 
-VK_KHR_ray_query 扩展，它可以支持跟踪来自所有着色器类型的广西按，包括图形、计算和光线追踪管线。它不会引入额外的 API 入口点。只是未相关的 SPIR-V 和 GLSL 扩展（SPV_KHR_ray_query 和 GLSL_EXT_ray_query）提供 API 支持。
+VK_KHR_ray_query 扩展，它可以支持跟踪来自所有着色器类型的光线，包括图形、计算和光线追踪管线。它不会引入额外的 API 入口点。只是未相关的 SPIR-V 和 GLSL 扩展（SPV_KHR_ray_query 和 GLSL_EXT_ray_query）提供 API 支持。
 
 VK_KHR_pipeline_library 扩展，是管线库。它是一种特殊的管线，不能直接绑定和使用。但是可以被链接到其他管线。它没有直接引入任何 API 函数，也没有定义如何创建管线库。这些步骤留给其他相关扩展，目前是 `VK_KHR_ray_tracing_pipeline`。可以创建一个光追管线库，然后在一个光追管线中链接此库。
 

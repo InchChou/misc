@@ -41,4 +41,24 @@
 
 ### `BeginInitViews()` 与 `EndInitViews()`
 
-UE5 与 UE4 不同，现在没有了 `InitViews()`，取而代之的是 `BeginInitViews()` 与 `EndInitViews()`，
+UE5 与 UE4 不同，现在没有了 `InitViews()`，取而代之的是 `BeginInitViews()` 与 `EndInitViews()`，并且在 `BeginInitViews()` 之前，渲染器会更新 virtual texture、启动更新光照 Function Atlas 贴图任务、更新天空大气、更新 lumen 场景、启动 Nanite 可见性任务、准备距离场 Scene、设置 ShadowSceneRenderer 的更新任务、更新各个模块的 Atlas 贴图。
+
+#### `BeginInitViews()` 
+
+原po对于 `InitViews` 写道：
+
+> 它的处理的渲染逻辑很多且重要：可见性判定，收集场景图元数据和标记，创建可见网格命令，初始化Pass渲染所需的数据等等。
+
+由于将它拆分成了两个步骤，`BeginInitViews()` 简单一些：可见性判定，收集场景图元数据和标记，创建可见网格命令。
+
+1. `PreVisibilityFrameSetup()`：创建可见性帧设置预备阶段。
+2. `TaskDatas.VisibilityTaskData->StartGatherDynamicMeshElements()`：尽早激活 `DynamicMeshElementsPrerequisites` 任务，开始处理动态网格数据，并在处理完后收集网格数据。
+3. `BeginInitDynamicShadows()`：在最终确定可见性之前尝试尽早启动动态阴影任务。
+4. `InstanceCullingManager.RegisterView()`：为 instance culling 创建 view 的 GPU 端表示
+5. 初始化特效系统 `FXSystem`
+6. `LumenScenePDIVisualization()`：创建 Lumen 场景的 PDI 可视化表示
+7. `InitSkyAtmosphereForViews()`：为每个 View 初始化天空大气效果
+8. `View.InitRHIResources()`：初始化每个 View 的 uniform buffer。
+9. `TaskDatas.VisibilityTaskData->ProcessRenderThreadTasks()`：统一处理可见性任务
+   1. `StartGatherDynamicMeshElements()`：即步骤 2。
+   2. `ViewPacket.BeginInitVisibility()`：

@@ -8,7 +8,7 @@
 
 首先我是使用 vulkan 的 rayquery 来实现路径追踪，使用 vulkan 的 rayquery 时需要创建 vulkan 的加速结构，为了创建加速结构，我们使用了三个扩展：`VK_KHR_buffer_device_address`、`VK_KHR_deferred_host_operations`、`VK_EXT_descriptor_indexing`。注意`VK_KHR_buffer_device_address`，有了这个扩展，我们就能获取 vulkan buffer 在 GPU 中的地址了。在创建底层加速结构的时候我们使用了模型的顶点、顶点索引等数据，并将这些顶点数据的 buffer 的地址传给了加速结构，所以记住这一点：此时**在 GPU 端我们已经有了一份顶点数据了**。
 
-在使用 rayquery 查询到光线和加速结构的交点之后，我们可以得到光线从起点到交点的时间，利用它可以求出焦点的位置，但是可能不太准确，最准确的方式是找到交点所在的三角形，利用重心坐标来求得交点的坐标。rayquery 提供给了我们交点所在的实例ID `InstanceId` 和图元ID `PrimitiveIndex`。`InstanceId` 对应着第几个底层加速结构，`PrimitiveIndex` 对应着底层加速结构中的第几个图元（一般情况下就是三角形）。
+在使用 rayquery 查询到光线和加速结构的交点之后，我们可以得到光线从起点到交点的时间，利用它可以求出交点的位置，但是可能不太准确，最准确的方式是找到交点所在的三角形，利用重心坐标来求得交点的坐标。rayquery 提供给了我们交点所在的实例ID `InstanceId` 和图元ID `PrimitiveIndex`。`InstanceId` 对应着第几个底层加速结构，`PrimitiveIndex` 对应着底层加速结构中的第几个图元（一般情况下就是三角形）。
 
 有了这些索引，我们就需要去取数据，但是去哪取呢？还记得刚刚提到的“在 GPU 端我们已经有了一份顶点数据了”吗？如果不把它用起来就太可惜了。我们之前获取到了它在 GPU 端的地址，现在可以用上了。
 
